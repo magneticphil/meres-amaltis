@@ -148,6 +148,8 @@
       <button class="icon-btn" id="refresh" title="Actualiser" aria-label="Actualiser">↻</button>
       <button class="icon-btn" id="logout" title="Déconnexion" aria-label="Déconnexion">⎋</button>
     </div>
+    <div id="alerte" class="alert hidden" role="alert"><span></span> <button class="btn" style="padding:2px 8px;font-size:13px" onclick="this.parentNode.classList.add('hidden')">OK</button></div>
+    <div id="file-rappel" class="alert hidden" role="status"></div>
     <div id="hdr-extra"></div>
   </header>
   <main>
@@ -195,7 +197,7 @@ function appel(fn, ...args) {
   const lecture = ['listerNoms', 'charger', 'journal'].includes(fn);
   busy(true);
   return envoi().catch(e => { if (!lecture) throw e; return new Promise(ok => setTimeout(ok, 1500)).then(envoi); })
-    .then(j => { busy(false); if (!j.ok) throw new Error(j.error); return j.data; },
+    .then(j => { busy(false); if (!j.ok) { const e = new Error(j.error); e.definitif = !!j.definitif; throw e; } return j.data; },
           e => { busy(false); throw e; });
 }
 const run = (fn, ...a) => appel(fn, S.auth.nom, S.auth.code, ...a);
@@ -250,23 +252,124 @@ async function login() {
   catch (e) { S.auth = null; $('l-err').textContent = errMsg(e); }
   finally { $('l-go').disabled = false; }
 }
-function logout() { store('meres_auth', null); S.auth = null; S.d = null; location.reload(); }
+function logout(force) {
+  const n = S.auth ? qGet().length : 0;
+  if (n && !force && !confirm(n + ' action' + (n > 1 ? 's' : '') + " pas encore transmise" + (n > 1 ? 's' : '') + " au registre. Elle" + (n > 1 ? 's' : '') + " partir" + (n > 1 ? 'ont' : 'a') + " à votre prochaine connexion. Se déconnecter quand même ?")) return;
+  store('meres_auth', null); S.auth = null; S.d = null; location.reload();
+}
 function start(d) {
   apply(d);
   $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  scheduleFlush(0);
 }
+/* Données du serveur (S.srv) + actions encore en file d'envoi = ce qui est affiché (S.d). */
 function apply(d) {
-  S.d = d; S.auth.nom = d.moi;
+  S.srv = d; S.auth.nom = d.moi;
+  if (d.requetes) { const k = new Set(d.requetes), q = qGet(), r = q.filter(it => !k.has(it.id)); if (r.length !== q.length) qSet(r); }
   store('meres_data_' + S.auth.nom.toLowerCase(), d);
   $('who').textContent = d.moi;
   $('tab-journal').classList.toggle('hidden', d.role !== 'admin');
-  render();
+  recalc();
 }
+function recalc() { if (!S.srv) return; S.d = superposer(S.srv); render(); rappelFile(); }
 async function refresh(quiet) {
   if (!$('ov').classList.contains('hidden')) return;
   try { apply(await run('charger')); if (!quiet) toast('À jour'); }
-  catch (e) { if (/code invalide/i.test(errMsg(e))) logout(); else if (!quiet) toast(errMsg(e)); }
+  catch (e) { if (/code invalide/i.test(errMsg(e))) logout(true); else if (!quiet) toast(errMsg(e)); }
 }
+
+/* ---------- Envoi en arrière-plan des saisies ----------
+   Une action (création, prise de boutures, destruction, modification, RSDC) est affichée et comptée
+   aussitôt, puis gardée sur le téléphone (file d'envoi) jusqu'à ce que le serveur la confirme.
+   Chaque action a un identifiant unique : renvoyée plusieurs fois (réseau lent, app fermée puis
+   rouverte), elle n'est enregistrée qu'une fois (le serveur l'inscrit au Journal, colonne Requête). */
+const qKey = () => 'meres.file.' + String(S.auth && S.auth.nom || '').toLowerCase();
+function qGet() { const q = load(qKey()); return Array.isArray(q) ? q : []; }
+function qSet(q) { store(qKey(), q.length ? q : null); }
+const maintenant = () => { const d = new Date(), z = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + ' ' + z(d.getHours()) + ':' + z(d.getMinutes()) + ':' + z(d.getSeconds()); };
+function enfiler(fn, args) {
+  const q = qGet(); q.push({ id: rid(), fn, args, t: Date.now(), at: maintenant() }); qSet(q);
+  recalc(); scheduleFlush(0);
+}
+/* Applique les actions en attente sur une copie des données du serveur. */
+function superposer(srv) {
+  const d = JSON.parse(JSON.stringify(srv)), moi = srv.moi;
+  const trouve = num => d.meres.find(m => norm(m.numero) === norm(num));
+  qGet().forEach(it => {
+    const a = it.args;
+    if (it.fn === 'creerMere') {
+      const n = norm(a[0].numero); if (trouve(n)) return;
+      const crea = a[0].creation || dateDuNumero(n);
+      d.meres.push({ numero:n, surnom:(a[0].surnom || '').trim(), lot:(a[0].lot || '').trim().toUpperCase() || lotDuNumero(n), cultivar:(a[0].cultivar || '').trim(),
+        creation:crea, source:a[0].creation ? 'saisie' : crea ? 'numéro' : 'inconnue', parent:a[0].parent ? norm(a[0].parent) : '', emplacement:(a[0].emplacement || '').trim(),
+        statut:'active', destruction:'', notes:(a[0].notes || '').trim(), creePar:moi, creeLe:it.at, queued:true });
+    } else if (it.fn === 'modifierMere') {
+      const m = trouve(a[0]); if (!m) return;
+      ['surnom', 'emplacement', 'notes', 'cultivar', 'lot'].forEach(k => { if (k in a[1]) m[k] = String(a[1][k]).trim(); });
+      if ('creation' in a[1] && a[1].creation !== m.creation) { m.creation = a[1].creation; m.source = a[1].creation ? 'saisie' : 'inconnue'; }
+    } else if (it.fn === 'prendreBoutures') {
+      a[0].lignes.forEach((l, i) => { const m = trouve(l.numero);
+        d.boutures.push({ id:'att-' + it.id + '-' + i, date:a[0].date, numero:m ? m.numero : l.numero, nb:String(l.nb), cultivar:m ? m.cultivar : '',
+          salle:a[0].salle, lot:a[0].lot, par:moi, notes:a[0].notes || '', queued:true }); });
+    } else if (it.fn === 'detruire') {
+      const m = trouve(a[0].numero); if (!m) return;
+      d.destructions.push({ id:'att-' + it.id, date:a[0].date, numero:m.numero, lot:m.lot, cultivar:m.cultivar, poids:String(a[0].poids).replace(',', '.'),
+        methode:a[0].methode, raison:a[0].raison, temoin1:a[0].temoin1, temoin2:a[0].temoin2, rsdc:a[0].rsdc ? 'oui' : 'non', par:moi, le:it.at, statut:'valide', queued:true });
+      m.statut = 'détruite'; m.destruction = a[0].date;
+    } else if (it.fn === 'marquerRsdc') {
+      const x = d.destructions.find(y => y.id === a[0]); if (x) x.rsdc = 'oui';
+    } else if (it.fn === 'annulerDestruction') {
+      const x = d.destructions.find(y => y.id === a[0]); if (!x) return;
+      x.statut = 'annulée'; x.annulePar = moi; x.motif = a[1];
+      const m = trouve(x.numero); if (m) { m.statut = 'active'; m.destruction = ''; }
+    } else if (it.fn === 'supprimerBouture') {
+      d.boutures = d.boutures.filter(b => b.id !== a[0]);
+    }
+  });
+  return d;
+}
+const LIBELLE = { creerMere:'Nouvelle mère', modifierMere:'Modification de fiche', prendreBoutures:'Prise de boutures', detruire:'Destruction',
+  marquerRsdc:'RSDC complété', annulerDestruction:'Annulation de destruction', supprimerBouture:'Suppression de boutures' };
+let flushing = false, flushTimer = null, flushDelay = 3000, apresFile = null;
+function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flushOutbox, ms); }
+async function flushOutbox() {
+  if (flushing || !S.auth || !S.srv) return;
+  const user = S.auth.nom; let q = qGet(); if (!q.length) { flushDelay = 3000; rappelFile(); return; }
+  flushing = true; let envoye = false;
+  try {
+    while (q.length && S.auth && S.auth.nom === user) {
+      const it = q[0];
+      try {
+        await run(it.fn, ...it.args, it.id);
+        q = qGet().filter(x => x.id !== it.id); qSet(q); flushDelay = 3000; envoye = true;
+      } catch (e) {
+        // Seul un refus de contenu est définitif ; tout le reste (réseau, lenteur de Google, verrou, code) est réessayé.
+        if (!e.definitif) { flushDelay = Math.min(flushDelay * 2, 120000); break; }
+        q = qGet().filter(x => x.id !== it.id); qSet(q); recalc();
+        alerte(LIBELLE[it.fn] + ' refusée par le registre : ' + errMsg(e));
+      }
+    }
+  } finally {
+    flushing = false;
+    if (qGet().length) scheduleFlush(flushDelay);
+    // File vidée : on recharge les données du serveur (identifiants définitifs, saisies des collègues).
+    else if (envoye) { clearTimeout(apresFile); apresFile = setTimeout(() => refresh(true), 300); }
+    rappelFile();
+  }
+}
+/* Discret : rien n'apparaît tant que l'envoi se fait normalement. Seulement si une action attend depuis
+   plus de 10 minutes (téléphone hors réseau), un rappel indique de garder l'app ouverte au réseau. */
+function rappelFile() {
+  const box = $('file-rappel'); if (!box) return;
+  const vieux = S.auth ? qGet().filter(it => Date.now() - (it.t || 0) > 600000).length : 0;
+  box.classList.toggle('hidden', !vieux);
+  if (vieux) box.textContent = vieux + ' action' + (vieux > 1 ? 's' : '') + ' pas encore transmise' + (vieux > 1 ? 's' : '') +
+    " au registre. Elle" + (vieux > 1 ? 's' : '') + " partir" + (vieux > 1 ? 'ont' : 'a') + " automatiquement dès que le téléphone aura du réseau : ne vous déconnectez pas d'ici là.";
+}
+function alerte(m) { const b = $('alerte'); b.querySelector('span').textContent = m; b.classList.remove('hidden'); }
+window.addEventListener('online', () => scheduleFlush(500));
+setInterval(rappelFile, 60000);
 
 /* ---------- Vues ---------- */
 function setVue(v) {
@@ -340,7 +443,7 @@ function renderBoutures() {
         '<div class="meta">Lot ' + esc(b0.lot) + ' · par ' + esc(b0.par) + '</div><div class="grp-l">' +
         L.map(b => { const m = mere(b.numero);
           return '<div><span>' + (m && m.surnom ? '<b>' + esc(m.surnom) + '</b> ' : '') + '<span class="num">' + esc(m ? abrege(b.numero) : b.numero) + '</span> · ' + esc(b.cultivar) + '</span><span>×' + esc(b.nb) +
-            (isAdmin() && b.id ? ' <button class="btn dan" style="padding:0 6px;font-size:12px" data-supb="' + esc(b.id) + '">✕</button>' : '') + '</span></div>'; }).join('') +
+            (isAdmin() && b.id && !b.queued ? ' <button class="btn dan" style="padding:0 6px;font-size:12px" data-supb="' + esc(b.id) + '">✕</button>' : '') + '</span></div>'; }).join('') +
         '</div></div>';
     }).join('') : '<div class="empty">Aucune prise de boutures sur les 13 derniers mois.</div>');
 }
@@ -361,8 +464,8 @@ function renderDestr() {
         '<div class="meta">Témoins : ' + esc(d.temoin1) + ', ' + esc(d.temoin2) + ' · saisi par ' + esc(d.par) + '</div>' +
         '<div class="meta">' + (an ? '<span class="tag off">annulée</span> ' + esc(d.annulePar) + ' — ' + esc(d.motif)
           : d.rsdc === 'oui' ? '<span class="tag ok">RSDC complété</span>' : '<span class="tag warn">RSDC à compléter</span>') + '</div>' +
-        (!an ? '<div class="acts">' + (d.rsdc !== 'oui' ? '<button class="btn ok" data-rsdc="' + esc(d.id) + '">RSDC complété</button>' : '') +
-          (isAdmin() ? '<button class="btn dan" data-annd="' + esc(d.id) + '">Annuler</button>' : '') + '</div>' : '') +
+        (!an ? '<div class="acts">' + (d.rsdc !== 'oui' && !d.queued ? '<button class="btn ok" data-rsdc="' + esc(d.id) + '">RSDC complété</button>' : '') +
+          (isAdmin() && !d.queued ? '<button class="btn dan" data-annd="' + esc(d.id) + '">Annuler</button>' : '') + '</div>' : '') +
         '</div></div>';
     }).join('') : '<div class="empty">Aucune destruction inscrite.</div>');
 }
@@ -385,9 +488,11 @@ const pied = (lib, id) => '<div class="err" id="f-err"></div><div class="foot"><
 async function soumettre(btnId, fn) {
   const b = $(btnId); b.disabled = true; $('f-err').textContent = '';
   try { await fn(); }
-  catch (e) { $('f-err').textContent = estPanne(e) ? 'Confirmation non reçue. Actualisez avant de réessayer pour vérifier si la saisie est enregistrée.' : errMsg(e); }
+  catch (e) { if ($('f-err')) $('f-err').textContent = errMsg(e); }
   finally { if ($(btnId)) b.disabled = false; }
 }
+const nonVide = (v, m) => { if (!String(v || '').trim()) throw new Error(m); };
+const pasFutur = (d, m) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('Date invalide.'); if (d > S.d.today) throw new Error(m || 'La date ne peut pas être dans le futur.'); };
 const datalistCult = () => '<datalist id="dl-cult">' + [...new Set(S.d.meres.map(m => m.cultivar).filter(Boolean))].sort().map(c => '<option value="' + esc(c) + '">').join('') + '</datalist>';
 
 /* Fiche d'une mère */
@@ -419,7 +524,7 @@ function fiche(num) {
 
 /* Nouvelle mère */
 function formMere() {
-  const req = rid();
+
   ouvrir(tete('Nouvelle mère') +
     '<label for="m-num">Numéro unique (forme complète)</label><input id="m-num" type="text" autocapitalize="characters" autocomplete="off" placeholder="202411020026_036BG">' +
     '<div class="hint" id="m-hint">Numéro attribué par Marc : 12 chiffres, « _ », lot.</div>' +
@@ -445,9 +550,15 @@ function formMere() {
   $('m-num').addEventListener('input', maj);
   $('m-parent').addEventListener('change', () => { const p = mere($('m-parent').value); if (p && !$('m-cult').value) $('m-cult').value = p.cultivar; });
   $('m-ok').onclick = () => soumettre('m-ok', async () => {
-    const m = await run('creerMere', { numero:$('m-num').value, surnom:$('m-surnom').value, lot:$('m-lot').value, cultivar:$('m-cult').value,
-      creation:$('m-crea').value, parent:$('m-parent').value, emplacement:$('m-empl').value, notes:$('m-notes').value, formatLibre:$('m-libre').checked }, req);
-    S.d.meres.push(m); apply(S.d); fermer(); toast('Mère enregistrée'); refresh(true);
+    const n = norm($('m-num').value), libre = $('m-libre').checked;
+    nonVide(n, 'Le numéro unique est obligatoire.');
+    if (!FORMAT.test(n) && !libre) throw new Error('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
+    if (mere(n)) throw new Error('Ce numéro existe déjà : ' + n + '.');
+    nonVide($('m-cult').value, 'Le cultivar est obligatoire.');
+    if ($('m-crea').value) pasFutur($('m-crea').value, 'La date de création ne peut pas être dans le futur.');
+    enfiler('creerMere', [{ numero:n, surnom:$('m-surnom').value, lot:$('m-lot').value, cultivar:$('m-cult').value,
+      creation:$('m-crea').value, parent:$('m-parent').value, emplacement:$('m-empl').value, notes:$('m-notes').value, formatLibre:libre }]);
+    fermer(); toast('Mère enregistrée');
   });
 }
 
@@ -468,14 +579,15 @@ function formModif(num) {
     const ch = { surnom:$('e-surnom').value, emplacement:$('e-empl').value, notes:$('e-notes').value };
     if (dateLibre) ch.creation = $('e-crea').value;
     if (adm) { ch.cultivar = $('e-cult').value; ch.lot = $('e-lot').value; }
-    const r = await run('modifierMere', m.numero, ch);
-    Object.assign(m, r); apply(S.d); fiche(m.numero); toast('Fiche mise à jour');
+    if (adm) nonVide(ch.cultivar, 'Le cultivar est obligatoire.');
+    if (ch.creation) pasFutur(ch.creation, 'La date de création ne peut pas être dans le futur.');
+    enfiler('modifierMere', [m.numero, ch]); fiche(m.numero); toast('Fiche mise à jour');
   });
 }
 
 /* Prise de boutures (une ou plusieurs mères) */
 function formPrise(pre) {
-  const req = rid(), act = actives();
+  const act = actives();
   if (!act.length) { toast('Aucune mère active.'); return; }
   const cults = [...new Set(act.map(m => m.cultivar))].sort((a, b) => a.localeCompare(b, 'fr'));
   const c0 = pre ? mere(pre).cultivar : (cults.length === 1 ? cults[0] : 'Tous');
@@ -499,15 +611,19 @@ function formPrise(pre) {
   $('p-list').addEventListener('input', () => { const t = lignes().reduce((s, l) => s + l.nb, 0), n = lignes().length;
     $('p-tot').textContent = 'Total : ' + t + ' bouture' + (t > 1 ? 's' : '') + (n ? ' · ' + n + ' mère' + (n > 1 ? 's' : '') : ''); });
   $('p-ok').onclick = () => soumettre('p-ok', async () => {
-    const r = await run('prendreBoutures', { date:$('p-date').value, salle:$('p-salle').value, lot:$('p-lot').value, notes:$('p-notes').value, lignes:lignes() }, req);
-    S.d.boutures.push(...r); apply(S.d); fermer();
-    toast(r.reduce((s, b) => s + +b.nb, 0) + ' boutures enregistrées'); refresh(true);
+    const date = $('p-date').value, L = lignes();
+    pasFutur(date); nonVide($('p-salle').value, 'Choisissez la salle de destination.'); nonVide($('p-lot').value, 'Le numéro de lot est obligatoire.');
+    if (!L.length) throw new Error('Indiquez au moins une mère et un nombre de boutures.');
+    L.forEach(l => { const m = mere(l.numero); if (l.nb !== Math.round(l.nb) || l.nb > 5000) throw new Error('Nombre de boutures invalide pour ' + nomMere(m) + '.');
+      if (m.creation && m.creation > date) throw new Error('La mère ' + nomMere(m) + " n'existait pas encore à cette date."); });
+    enfiler('prendreBoutures', [{ date, salle:$('p-salle').value, lot:$('p-lot').value.trim(), notes:$('p-notes').value, lignes:L }]); fermer();
+    const t = L.reduce((s, l) => s + l.nb, 0); toast(t + ' bouture' + (t > 1 ? 's' : '') + ' enregistrée' + (t > 1 ? 's' : ''));
   });
 }
 
 /* Destruction */
 function formDetr(pre) {
-  const req = rid(), act = actives(), T = S.d.temoins;
+  const act = actives(), T = S.d.temoins;
   if (!act.length) { toast('Aucune mère active.'); return; }
   const optT = sel => '<option value="">—</option>' + T.map(t => '<option' + (t.nom === sel ? ' selected' : '') + '>' + esc(t.nom) + '</option>').join('');
   ouvrir(tete('Destruction') +
@@ -530,17 +646,22 @@ function formDetr(pre) {
     if (r0 === 'Autre' && !prec) throw new Error('Précisez la raison.');
     const raison = r0 === 'Autre' ? prec : r0 + (prec ? ' — ' + prec : '');
     const num = $('d-mere').value; if (!num) throw new Error('Choisissez la mère.');
-    const m = mere(num);
+    const m = mere(num), date = $('d-date').value, poids = parseFloat(String($('d-poids').value).replace(',', '.')), t1 = $('d-t1').value, t2 = $('d-t2').value;
+    pasFutur(date); if (m.creation && date < m.creation) throw new Error('La date de destruction précède la date de création.');
+    if (!(poids > 0) || poids > 100000) throw new Error('Indiquez le poids net en grammes.');
+    nonVide($('d-meth').value, 'Indiquez la méthode de destruction.');
+    if (S.d.temoins.length < 2) throw new Error("Moins de deux témoins habilités sont inscrits : la destruction ne peut pas être enregistrée.");
+    if (!t1 || !t2) throw new Error('Deux témoins habilités sont obligatoires.');
+    if (t1 === t2) throw new Error('Les deux témoins doivent être des personnes différentes.');
     if (!confirm('Confirmer la destruction de ' + nomMere(m) + ' (' + m.numero + ') ? Cette action ne peut être annulée que par un administrateur.')) return;
-    const r = await run('detruire', { numero:num, date:$('d-date').value, poids:$('d-poids').value, methode:$('d-meth').value, raison,
-      temoin1:$('d-t1').value, temoin2:$('d-t2').value, rsdc:$('d-rsdc').checked }, req);
-    S.d.destructions.push(r.destruction); Object.assign(m, r.mere); apply(S.d); fermer(); toast('Destruction enregistrée'); refresh(true);
+    enfiler('detruire', [{ numero:m.numero, date, poids, methode:$('d-meth').value.trim(), raison, temoin1:t1, temoin2:t2, rsdc:$('d-rsdc').checked }]);
+    fermer(); toast('Destruction enregistrée');
   });
 }
 
 function formMotif(titre, lib, fn) {
   ouvrir(tete(titre) + '<label for="x-motif">Motif (inscrit au journal)</label><textarea id="x-motif"></textarea>' + pied(lib, 'x-ok'));
-  $('x-ok').onclick = () => soumettre('x-ok', async () => { await fn($('x-motif').value.trim()); fermer(); refresh(true); });
+  $('x-ok').onclick = () => soumettre('x-ok', async () => { const m = $('x-motif').value.trim(); nonVide(m, 'Indiquez le motif.'); fn(m); fermer(); });
 }
 
 /* ---------- Évènements ---------- */
@@ -562,11 +683,11 @@ document.addEventListener('click', e => {
   else if (d.prise) formPrise(d.prise);
   else if (d.detr) formDetr(d.detr);
   else if (d.modif) formModif(d.modif);
-  else if (d.rsdc) { if (confirm('Confirmer que cette destruction est inscrite au RSDC ?')) run('marquerRsdc', d.rsdc).then(() => { toast('RSDC complété'); refresh(true); }, er => toast(errMsg(er))); }
-  else if (d.annd) formMotif('Annuler la destruction', 'Annuler la destruction', m => run('annulerDestruction', d.annd, m));
-  else if (d.supb) formMotif('Supprimer la ligne de boutures', 'Supprimer', m => run('supprimerBouture', d.supb, m));
+  else if (d.rsdc) { if (confirm('Confirmer que cette destruction est inscrite au RSDC ?')) { enfiler('marquerRsdc', [d.rsdc]); toast('RSDC complété'); } }
+  else if (d.annd) formMotif('Annuler la destruction', 'Annuler la destruction', m => { enfiler('annulerDestruction', [d.annd, m]); toast('Destruction annulée'); });
+  else if (d.supb) formMotif('Supprimer la ligne de boutures', 'Supprimer', m => { enfiler('supprimerBouture', [d.supb, m]); toast('Ligne supprimée'); });
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && S.d) refresh(true); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.d) { scheduleFlush(0); refresh(true); } });
 initLogin();
 </script>
 </body>
