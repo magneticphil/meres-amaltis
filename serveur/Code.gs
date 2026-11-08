@@ -7,6 +7,9 @@
  *                  Emplacement | Statut | Date de destruction | Notes | Créée par | Créée le | Modifiée par | Modifiée le
  *   Destructions : ID | Date | Numéro | Lot | Cultivar | Poids (g) | Méthode | Raison | Témoin 1 | Témoin 2 |
  *                  RSDC complété | Saisi par | Saisi le | Statut | Annulé par | Annulé le | Motif d'annulation
+ *   Destructions plants : ID | Date | Lot | Étape | Salle | Nombre de plants | Raison | Notes | Saisi par | Saisi le |
+ *                  Statut | Annulé par | Annulé le | Motif d'annulation   (plants des lots de boutures, pas les mères ;
+ *                  depuis mars 2025, Santé Canada n'exige que le nombre de plants détruits : ni poids ni témoins)
  *   Boutures     : (onglet existant, lu par registre_bv.py) + colonne I « ID »
  *   Végétation   : (onglet existant, lu par registre_bv.py) — tenu à jour automatiquement, une ligne par mère
  *   Témoins      : Nom | Habilitation | Actif      (personnes habilitées à témoigner d'une destruction)
@@ -34,6 +37,8 @@ const HEAD = {
     'Responsable', 'Notes', 'ID'],
   'Végétation': ['Date de création', 'Date de destruction', 'No. unique du plant mère', 'Nombre de plants', 'Cultivar',
     'Responsable', 'Notes'],
+  'Destructions plants': ['ID', 'Date', 'Lot', 'Étape', 'Salle', 'Nombre de plants', 'Raison', 'Notes', 'Saisi par', 'Saisi le',
+    'Statut', 'Annulé par', 'Annulé le', "Motif d'annulation"],
   'Témoins': ['Nom', 'Habilitation', 'Actif'],
   'Paramètres': ['Clé', 'Valeur'],
   'Journal': ['Horodatage', 'Employé', 'Action', 'Objet', 'ID', 'Détails', 'Requête'],
@@ -208,6 +213,11 @@ function normDate_(s) {
   if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
   return s;
 }
+function destructionPlantsDto_(x) {
+  const r = x.r;
+  return { id: r[0], date: r[1], lot: r[2], etape: r[3], salle: r[4], nombre: r[5], raison: r[6], notes: r[7],
+    par: r[8], le: r[9], statut: r[10] || 'valide', annulePar: r[11], annuleLe: r[12], motif: r[13] };
+}
 function parametres_() {
   const p = {};
   rows_('Paramètres').forEach(x => { if (x.r[0]) p[x.r[0]] = x.r[1]; });
@@ -227,6 +237,7 @@ function charger(nom, code) {
     meres: rows_('Mères').filter(x => x.r[M.num]).map(mereDto_),
     boutures: rows_('Boutures').map(boutureDto_).filter(b => b.date >= depuis),
     destructions: rows_('Destructions').map(destructionDto_),
+    destructionsPlants: rows_('Destructions plants').map(destructionPlantsDto_),
     temoins: rows_('Témoins').filter(x => x.r[0] && (x.r[2] === '' || yes_(x.r[2]))).map(x => ({ nom: x.r[0], habilitation: x.r[1] })),
     employes: employes_().map(e => e.nom),
     methodes: p.methodes, salles: p.salles,
@@ -447,6 +458,65 @@ function annulerDestruction(nom, code, id, motif, requestId) {
   });
 }
 
+/* ====================== Destructions de plants par lot ====================== */
+
+const ETAPES_ = ['Boutures non plantées', '4 pouces', 'En salle'];
+const normLot_ = s => String(s || '').replace(/\s+/g, '').toUpperCase();
+
+/**
+ * Destruction de plants d'un lot de boutures (surplus de boutures à la mise en 4 pouces, surplus de 4 pouces
+ * au transfert, plants retirés en salle). d = { date, lot, etape, nombre, raison, notes }
+ * Le total détruit d'un lot ne peut pas dépasser les boutures prélevées pour ce lot (onglet Boutures).
+ */
+function detruirePlants(nom, code, d, requestId) {
+  const u = auth_(nom, code);
+  return action_(requestId, () => {
+    d = d || {};
+    const date = txt_(d.date, 10);
+    if (!isDate_(date)) throw refus_('Date invalide.');
+    if (date > today_()) throw refus_('La date ne peut pas être dans le futur.');
+    const lotN = normLot_(d.lot);
+    if (!lotN) throw refus_('Choisissez le lot.');
+    const bout = rows_('Boutures').filter(x => normLot_(x.r[5]) === lotN);
+    if (!bout.length) throw refus_('Lot inconnu dans les boutures : ' + txt_(d.lot, 40) + '.');
+    const etape = txt_(d.etape, 40);
+    if (ETAPES_.indexOf(etape) < 0) throw refus_('Étape invalide : choisissez ' + ETAPES_.join(', ') + '.');
+    const nombre = Number(String(d.nombre).replace(',', '.'));
+    if (!(nombre > 0) || !Number.isInteger(nombre)) throw refus_('Le nombre de plants doit être un entier supérieur à 0.');
+    const raison = txt_(d.raison, 200);
+    if (!raison) throw refus_('Indiquez la raison de la destruction.');
+    const preleves = bout.reduce((s, x) => s + (parseFloat(String(x.r[2]).replace(',', '.')) || 0), 0);
+    const premiere = bout.map(x => normDate_(x.r[0])).filter(isDate_).sort()[0];
+    if (premiere && date < premiere) throw refus_('La date précède la prise de boutures du lot (' + premiere + ').');
+    const deja = rows_('Destructions plants').filter(x => normLot_(x.r[2]) === lotN && (x.r[10] || 'valide') !== 'annulée')
+      .reduce((s, x) => s + (parseFloat(x.r[5]) || 0), 0);
+    if (deja + nombre > preleves)
+      throw refus_('Le total détruit (' + (deja + nombre) + ') dépasserait les ' + preleves + ' boutures prélevées du lot ' + bout[0].r[5] + ' (déjà détruites : ' + deja + ').');
+    const lot = bout[0].r[5], salle = bout[0].r[4];
+    const id = id_();
+    const row = [id, date, lot, etape, salle, nombre, raison, txt_(d.notes, 300), u.nom, now_(), 'valide', '', '', ''];
+    append_('Destructions plants', row);
+    journal_(u.nom, 'destruction', 'plants', lot, date + ' · ' + etape + ' · ' + nombre + ' plant' + (nombre > 1 ? 's' : '') +
+      ' · ' + raison + ' · lot ' + lot + ' (' + salle + ') · restants ' + (preleves - deja - nombre) + ' / ' + preleves + ' · ID ' + id);
+    return destructionPlantsDto_({ r: row.map(String) });
+  });
+}
+
+/** Annulation d'une destruction de plants saisie par erreur (admin). */
+function annulerDestructionPlants(nom, code, id, motif, requestId) {
+  const u = admin_(nom, code);
+  return action_(requestId, () => {
+    if (!txt_(motif)) throw refus_("Indiquez le motif de l'annulation.");
+    const x = rows_('Destructions plants').find(y => y.r[0] === String(id));
+    if (!x) throw refus_('Destruction introuvable.');
+    if (x.r[10] === 'annulée') return true;
+    setCells_('Destructions plants', x.row, 10, ['annulée', u.nom, now_(), txt_(motif, 300)]);
+    journal_(u.nom, 'annulation', 'destruction plants', id,
+      x.r[2] + ' · ' + x.r[3] + ' · ' + x.r[5] + ' plants détruits le ' + x.r[1] + ' · motif : ' + txt_(motif, 300));
+    return true;
+  });
+}
+
 /* ====================== Porte d'entrée (GitHub Pages) ====================== */
 
 const API_ = {
@@ -460,6 +530,8 @@ const API_ = {
   detruire: (n, c, d, r) => detruire(n, c, d, r),
   marquerRsdc: (n, c, id, r) => marquerRsdc(n, c, id, r),
   annulerDestruction: (n, c, id, m, r) => annulerDestruction(n, c, id, m, r),
+  detruirePlants: (n, c, d, r) => detruirePlants(n, c, d, r),
+  annulerDestructionPlants: (n, c, id, m, r) => annulerDestructionPlants(n, c, id, m, r),
 };
 function doPost(e) {
   let rep;
