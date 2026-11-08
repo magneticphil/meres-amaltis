@@ -176,6 +176,9 @@ const API_URL = 'https://script.google.com/macros/s/AKfycbxVEe4LoQHxOFyT7KKShe_k
 
 const MOIS = ['janvier','février','mars','avril','mai','juin','juillet','août','septembre','octobre','novembre','décembre'];
 const RAISONS = ['Âge', 'Perte de vigueur', 'Maladie ou ravageur', 'Fin du cultivar', 'Autre'];
+const ETAPES = ['Boutures non plantées', '4 pouces', 'En salle'];
+const RAISONS_PLANTS = ['Surplus', 'Plants faibles ou non racinés', 'Maladie ou ravageur', 'Autre'];
+const NB_SALLE = [336, 448];  // plants habituellement transférés dans une grande salle (moins en salle 7)
 const S = { auth:null, d:null, vue:'meres', filtre:'active', cult:'Tous', q:'' };
 
 /* ---------- Utilitaires ---------- */
@@ -295,6 +298,7 @@ function enfiler(fn, args) {
 /* Applique les actions en attente sur une copie des données du serveur. */
 function superposer(srv) {
   const d = JSON.parse(JSON.stringify(srv)), moi = srv.moi;
+  d.destructionsPlants = d.destructionsPlants || [];
   const trouve = num => d.meres.find(m => norm(m.numero) === norm(num));
   qGet().forEach(it => {
     const a = it.args;
@@ -323,6 +327,12 @@ function superposer(srv) {
       const x = d.destructions.find(y => y.id === a[0]); if (!x) return;
       x.statut = 'annulée'; x.annulePar = moi; x.motif = a[1];
       const m = trouve(x.numero); if (m) { m.statut = 'active'; m.destruction = ''; }
+    } else if (it.fn === 'detruirePlants') {
+      const x = a[0], b0 = d.boutures.find(b => normLot(b.lot) === normLot(x.lot));
+      d.destructionsPlants.push({ id:'att-' + it.id, date:x.date, lot:b0 ? b0.lot : x.lot, etape:x.etape, salle:b0 ? b0.salle : '', nombre:String(x.nombre),
+        raison:x.raison, notes:x.notes || '', par:moi, le:it.at, statut:'valide', queued:true });
+    } else if (it.fn === 'annulerDestructionPlants') {
+      const x = d.destructionsPlants.find(y => y.id === a[0]); if (x) { x.statut = 'annulée'; x.annulePar = moi; x.motif = a[1]; }
     } else if (it.fn === 'supprimerBouture') {
       d.boutures = d.boutures.filter(b => b.id !== a[0]);
     }
@@ -330,7 +340,8 @@ function superposer(srv) {
   return d;
 }
 const LIBELLE = { creerMere:'Nouvelle mère', modifierMere:'Modification de fiche', prendreBoutures:'Prise de boutures', detruire:'Destruction',
-  marquerRsdc:'RSDC complété', annulerDestruction:'Annulation de destruction', supprimerBouture:'Suppression de boutures' };
+  marquerRsdc:'RSDC complété', annulerDestruction:'Annulation de destruction', supprimerBouture:'Suppression de boutures',
+  detruirePlants:'Destruction de plants', annulerDestructionPlants:'Annulation de destruction de plants' };
 let flushing = false, flushTimer = null, flushDelay = 3000, apresFile = null;
 function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flushOutbox, ms); }
 async function flushOutbox() {
@@ -429,22 +440,55 @@ function carteMere(m) {
     (det ? ' · <span class="tag off">détruite le ' + fDate(m.destruction) + '</span>' : '') + '</div></div></div>';
 }
 
+/* Lots de boutures : prélevées (onglet Boutures) et détruites par étape (onglet Destructions plants). */
+const normLot = s => String(s || '').replace(/\s+/g, '').toUpperCase();
+function lots() {
+  const L = {};
+  S.d.boutures.forEach(b => { const k = normLot(b.lot); if (!k) return;
+    const x = L[k] || (L[k] = { cle:k, lot:b.lot, salle:b.salle, debut:b.date, fin:b.date, preleves:0, prises:[], detruits:{}, destructions:[] });
+    x.preleves += +b.nb || 0; x.prises.push(b);
+    if (b.date < x.debut) x.debut = b.date; if (b.date > x.fin) x.fin = b.date; });
+  (S.d.destructionsPlants || []).forEach(d => { const x = L[normLot(d.lot)]; if (!x) return; x.destructions.push(d);
+    if (d.statut !== 'annulée') x.detruits[d.etape] = (x.detruits[d.etape] || 0) + (+d.nombre || 0); });
+  Object.values(L).forEach(x => { x.totalDetruits = Object.values(x.detruits).reduce((s, n) => s + n, 0); x.restants = x.preleves - x.totalDetruits; });
+  return Object.values(L).sort((a, b) => b.fin.localeCompare(a.fin) || a.lot.localeCompare(b.lot));
+}
+const pl = n => n + ' plant' + (Math.abs(n) > 1 ? 's' : '');
+function decompteHtml(x, ajout) {
+  ajout = ajout || {};
+  const det = e => (x.detruits[e] || 0) + (ajout.etape === e ? ajout.nombre || 0 : 0);
+  const total = ETAPES.reduce((s, e) => s + det(e), 0), reste = x.preleves - total;
+  return '<div class="kv">' +
+    '<div><span>Boutures prélevées</span><b>' + x.preleves + '</b></div>' +
+    ETAPES.map(e => '<div><span>Détruites — ' + esc(e) + '</span><b>' + det(e) + (ajout.etape === e && ajout.nombre ? ' <small style="color:var(--mute);font-weight:400">(dont ' + ajout.nombre + ' ici)</small>' : '') + '</b></div>').join('') +
+    '<div><span>Restantes</span><b' + (reste < 0 ? ' style="color:var(--warn)"' : '') + '>' + reste + '</b></div></div>';
+}
+/* Plants restants au transfert en grande salle : prélevées − boutures non plantées − 4 pouces détruits. */
+function avertTransfert(x, ajout) {
+  ajout = ajout || {};
+  const det = e => (x.detruits[e] || 0) + (ajout.etape === e ? ajout.nombre || 0 : 0);
+  const n = x.preleves - det('Boutures non plantées') - det('4 pouces');
+  if (det('En salle') || NB_SALLE.includes(n) || n <= 0) return '';
+  return '<div class="hint" style="color:var(--acc);margin-top:6px">Au transfert : ' + pl(n) + ', au lieu de ' + NB_SALLE.join(' ou ') +
+    ' habituellement. Normal pour la salle 7, qui en reçoit moins ; sinon, vérifiez le nombre.</div>';
+}
 function renderBoutures() {
-  const grp = {};
-  S.d.boutures.forEach(b => { const k = b.date + '|' + b.lot + '|' + b.salle; (grp[k] = grp[k] || []).push(b); });
-  const keys = Object.keys(grp).sort().reverse();
+  const L = lots();
   const tot30 = S.d.boutures.filter(b => b.date >= addDays(S.d.today, -30)).reduce((s, b) => s + (+b.nb || 0), 0);
   $('v-boutures').innerHTML =
     '<div class="stats"><div class="stat"><b>' + tot30 + '</b><span>boutures (30 derniers jours)</span></div>' +
-    '<div class="stat"><b>' + keys.length + '</b><span>prises (13 mois)</span></div></div>' +
-    (keys.length ? keys.map(k => {
-      const L = grp[k], b0 = L[0], tot = L.reduce((s, b) => s + (+b.nb || 0), 0);
-      return '<div class="grp"><div class="grp-h"><b>' + esc(fDate(b0.date)) + ' · ' + esc(b0.salle) + '</b><span class="tag gold">' + tot + ' boutures</span></div>' +
-        '<div class="meta">Lot ' + esc(b0.lot) + ' · par ' + esc(b0.par) + '</div><div class="grp-l">' +
-        L.map(b => { const m = mere(b.numero);
-          return '<div><span>' + (m && m.surnom ? '<b>' + esc(m.surnom) + '</b> ' : '') + '<span class="num">' + esc(m ? abrege(b.numero) : b.numero) + '</span> · ' + esc(b.cultivar) + '</span><span>×' + esc(b.nb) +
+    '<div class="stat"><b>' + L.length + '</b><span>lots (13 mois)</span></div></div>' +
+    (L.length ? L.map(x => {
+      const prises = x.prises.slice().sort((a, b) => b.date.localeCompare(a.date));
+      const dest = x.destructions.slice().sort((a, b) => b.date.localeCompare(a.date));
+      return '<div class="grp"><div class="grp-h"><b>Lot ' + esc(x.lot) + ' · ' + esc(x.salle) + '</b><span class="tag gold">' + x.preleves + ' boutures</span></div>' +
+        '<div class="meta">Prélevées le ' + esc(fDate(x.debut)) + (x.fin !== x.debut ? ' au ' + esc(fDate(x.fin)) : '') +
+        (x.totalDetruits ? ' · ' + x.totalDetruits + ' détruites · <b>' + x.restants + ' restantes</b>' : '') + '</div><div class="grp-l">' +
+        prises.map(b => { const m = mere(b.numero);
+          return '<div><span>' + esc(fDate(b.date)) + ' · ' + (m && m.surnom ? '<b>' + esc(m.surnom) + '</b> ' : '') + '<span class="num">' + esc(m ? abrege(b.numero) : b.numero) + '</span></span><span>×' + esc(b.nb) +
             (isAdmin() && b.id && !b.queued ? ' <button class="btn dan" style="padding:0 6px;font-size:12px" data-supb="' + esc(b.id) + '">✕</button>' : '') + '</span></div>'; }).join('') +
-        '</div></div>';
+        dest.map(d => '<div' + (d.statut === 'annulée' ? ' style="opacity:.5;text-decoration:line-through"' : '') + '><span>' + esc(fDate(d.date)) + ' · détruites (' + esc(d.etape) + ')</span><span style="color:var(--warn)">−' + esc(d.nombre) + '</span></div>').join('') +
+        '</div><div class="acts"><button class="btn" data-dlot="' + esc(x.cle) + '">Détruire des plants</button></div></div>';
     }).join('') : '<div class="empty">Aucune prise de boutures sur les 13 derniers mois.</div>');
 }
 function addDays(s, n) { const d = toD(s); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
@@ -455,6 +499,8 @@ function renderDestr() {
   $('v-destr').innerHTML =
     (S.d.temoins.length < 2 ? '<div class="alert">Moins de deux témoins habilités sont inscrits. Un administrateur doit remplir l\'onglet « Témoins » du Sheet avant toute destruction.</div>' : '') +
     (sansRsdc ? '<div class="alert">' + sansRsdc + ' destruction' + (sansRsdc > 1 ? 's' : '') + ' pas encore inscrite' + (sansRsdc > 1 ? 's' : '') + ' au RSDC.</div>' : '') +
+    '<h2>Plants des lots</h2>' + listeDestrPlants() +
+    '<h2>Plants mères</h2>' +
     (L.length ? L.map(d => {
       const m = mere(d.numero), an = d.statut === 'annulée';
       return '<div class="card det' + (an ? ' annul' : '') + '"><div class="bar"></div><div class="body">' +
@@ -467,7 +513,19 @@ function renderDestr() {
         (!an ? '<div class="acts">' + (d.rsdc !== 'oui' && !d.queued ? '<button class="btn ok" data-rsdc="' + esc(d.id) + '">RSDC complété</button>' : '') +
           (isAdmin() && !d.queued ? '<button class="btn dan" data-annd="' + esc(d.id) + '">Annuler</button>' : '') + '</div>' : '') +
         '</div></div>';
-    }).join('') : '<div class="empty">Aucune destruction inscrite.</div>');
+    }).join('') : '<div class="empty">Aucune destruction de plant mère inscrite.</div>');
+}
+function listeDestrPlants() {
+  const L = (S.d.destructionsPlants || []).slice().sort((a, b) => (b.date + b.le).localeCompare(a.date + a.le));
+  if (!L.length) return '<div class="empty">Aucune destruction de plants inscrite.</div>';
+  return L.map(d => { const an = d.statut === 'annulée';
+    return '<div class="card det' + (an ? ' annul' : '') + '"><div class="bar"></div><div class="body">' +
+      '<div class="ttl">' + pl(+d.nombre) + ' — ' + esc(d.etape) + '</div>' +
+      '<div class="meta">' + esc(fDate(d.date)) + ' · lot ' + esc(d.lot) + ' · ' + esc(d.salle) + '</div>' +
+      '<div class="meta">' + esc(d.raison) + (d.notes ? ' · ' + esc(d.notes) : '') + ' · saisi par ' + esc(d.par) + '</div>' +
+      (an ? '<div class="meta"><span class="tag off">annulée</span> ' + esc(d.annulePar) + ' — ' + esc(d.motif) + '</div>'
+        : isAdmin() && !d.queued ? '<div class="acts"><button class="btn dan" data-andp="' + esc(d.id) + '">Annuler</button></div>' : '') +
+      '</div></div>'; }).join('');
 }
 
 async function renderJournal() {
@@ -659,6 +717,54 @@ function formDetr(pre) {
   });
 }
 
+/* Destruction : plant mère (registre avec poids et témoins) ou plants d'un lot (nombre seulement) */
+function choixDestruction() {
+  ouvrir(tete('Destruction') +
+    '<div class="foot" style="flex-direction:column"><button class="btn pri" data-dlot="">Détruire des plants d\'un lot</button>' +
+    '<button class="btn" data-detr="">Détruire un plant mère</button></div>');
+}
+
+/* Destruction de plants d'un lot de boutures */
+function formDetrPlants(preCle) {
+  const L = lots();
+  if (!L.length) { toast('Aucun lot de boutures sur les 13 derniers mois.'); return; }
+  const x0 = L.find(x => x.cle === preCle) || L.find(x => x.restants > 0) || L[0];
+  const etape0 = x0.detruits['En salle'] ? 'En salle' : '4 pouces';
+  ouvrir(tete('Détruire des plants d\'un lot') +
+    '<label for="dp-lot">Lot</label><select id="dp-lot">' + L.map(x => '<option value="' + esc(x.cle) + '"' + (x === x0 ? ' selected' : '') + '>Lot ' + esc(x.lot) + ' · ' +
+      esc(x.salle) + ' — ' + x.restants + ' restant' + (x.restants > 1 ? 's' : '') + ' / ' + x.preleves + '</option>').join('') + '</select>' +
+    '<label>Étape</label><div class="pills">' + ETAPES.map(e => '<label><input type="radio" name="dp-e" value="' + esc(e) + '"' + (e === etape0 ? ' checked' : '') + '><span>' + esc(e) + '</span></label>').join('') + '</div>' +
+    '<div class="two"><div><label for="dp-date">Date</label><input id="dp-date" type="date" max="' + S.d.today + '" value="' + S.d.today + '"></div>' +
+    '<div><label for="dp-nb">Nombre de plants</label><input id="dp-nb" type="number" inputmode="numeric" min="1" step="1"></div></div>' +
+    '<label>Raison</label><div class="pills">' + RAISONS_PLANTS.map((r, i) => '<label><input type="radio" name="dp-r" value="' + esc(r) + '"' + (i === 0 ? ' checked' : '') + '><span>' + esc(r) + '</span></label>').join('') + '</div>' +
+    '<input id="dp-raison" type="text" placeholder="Précision (obligatoire pour « Autre »)" style="margin-top:8px">' +
+    '<label for="dp-notes">Notes</label><textarea id="dp-notes"></textarea>' +
+    '<h2>Décompte du lot</h2><div id="dp-dec"></div>' +
+    pied('Enregistrer la destruction', 'dp-ok'));
+  const lot = () => L.find(x => x.cle === $('dp-lot').value);
+  const etape = () => (document.querySelector('[name=dp-e]:checked') || {}).value || '';
+  const nombre = () => { const n = Number($('dp-nb').value); return n > 0 ? n : 0; };
+  const maj = () => { const x = lot(), a = { etape:etape(), nombre:nombre() };
+    $('dp-dec').innerHTML = decompteHtml(x, a) + avertTransfert(x, a) +
+      (a.nombre > x.restants ? '<div class="hint bad" style="margin-top:6px">Plus que les ' + pl(x.restants) + ' restants du lot.</div>' : ''); };
+  $('dp-lot').addEventListener('change', maj); $('dp-nb').addEventListener('input', maj);
+  document.querySelectorAll('[name=dp-e]').forEach(r => r.addEventListener('change', maj));
+  maj();
+  $('dp-ok').onclick = () => soumettre('dp-ok', async () => {
+    const x = lot(), date = $('dp-date').value, n = Number($('dp-nb').value), e = etape();
+    pasFutur(date);
+    if (date < x.debut) throw new Error('La date précède la prise de boutures du lot (' + fDate(x.debut) + ').');
+    if (!ETAPES.includes(e)) throw new Error("Choisissez l'étape.");
+    if (!(n > 0) || !Number.isInteger(n)) throw new Error('Le nombre de plants doit être un entier supérieur à 0.');
+    if (n > x.restants) throw new Error('Le lot ' + x.lot + ' n\'a plus que ' + pl(x.restants) + ' (prélevées : ' + x.preleves + ').');
+    const r0 = (document.querySelector('[name=dp-r]:checked') || {}).value || '', prec = $('dp-raison').value.trim();
+    if (r0 === 'Autre' && !prec) throw new Error('Précisez la raison.');
+    const raison = r0 === 'Autre' ? prec : r0 + (prec ? ' — ' + prec : '');
+    enfiler('detruirePlants', [{ date, lot:x.lot, etape:e, nombre:n, raison, notes:$('dp-notes').value.trim() }]);
+    fermer(); toast(pl(n) + ' détruit' + (n > 1 ? 's' : '') + ' — lot ' + x.lot);
+  });
+}
+
 function formMotif(titre, lib, fn) {
   ouvrir(tete(titre) + '<label for="x-motif">Motif (inscrit au journal)</label><textarea id="x-motif"></textarea>' + pied(lib, 'x-ok'));
   $('x-ok').onclick = () => soumettre('x-ok', async () => { const m = $('x-motif').value.trim(); nonVide(m, 'Indiquez le motif.'); fn(m); fermer(); });
@@ -670,18 +776,20 @@ $('l-code').addEventListener('keydown', e => { if (e.key === 'Enter') login(); }
 $('logout').onclick = () => { if (confirm('Se déconnecter ?')) logout(); };
 $('refresh').onclick = () => refresh(false);
 document.querySelector('.tabs').onclick = e => { const b = e.target.closest('[data-v]'); if (b) setVue(b.dataset.v); };
-$('fab').onclick = () => S.vue === 'meres' ? formMere() : S.vue === 'boutures' ? formPrise() : formDetr();
+$('fab').onclick = () => S.vue === 'meres' ? formMere() : S.vue === 'boutures' ? formPrise() : choixDestruction();
 $('ov').onclick = e => { if (e.target === $('ov') || e.target.closest('[data-close]')) fermer(); };
 $('hdr-extra').addEventListener('input', e => { if (e.target.id === 'q') { S.q = e.target.value; renderMeres(); } });
 $('hdr-extra').addEventListener('click', e => { const b = e.target.closest('[data-cult]'); if (b) { S.cult = b.dataset.cult; render(); } });
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb]');
+  const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb],[data-dlot],[data-andp]');
   if (!t) return;
   const d = t.dataset;
   if (d.filtre) { S.filtre = d.filtre; renderMeres(); }
   else if (d.mere) fiche(d.mere);
   else if (d.prise) formPrise(d.prise);
-  else if (d.detr) formDetr(d.detr);
+  else if (d.detr !== undefined) formDetr(d.detr);
+  else if (d.dlot !== undefined) formDetrPlants(d.dlot);
+  else if (d.andp) formMotif('Annuler la destruction de plants', 'Annuler la destruction', m => { enfiler('annulerDestructionPlants', [d.andp, m]); toast('Destruction annulée'); });
   else if (d.modif) formModif(d.modif);
   else if (d.rsdc) { if (confirm('Confirmer que cette destruction est inscrite au RSDC ?')) { enfiler('marquerRsdc', [d.rsdc]); toast('RSDC complété'); } }
   else if (d.annd) formMotif('Annuler la destruction', 'Annuler la destruction', m => { enfiler('annulerDestruction', [d.annd, m]); toast('Destruction annulée'); });
