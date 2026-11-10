@@ -327,6 +327,28 @@ function modifierMere(nom, code, numero, champs, requestId) {
   });
 }
 
+/** Renomme un cultivar sur toutes les mères qui le portent (admin), et dans le registre de végétation. */
+function renommerCultivar(nom, code, ancien, nouveau, requestId) {
+  const u = admin_(nom, code);
+  return action_(requestId, () => {
+    ancien = txt_(ancien, 60); nouveau = txt_(nouveau, 60);
+    if (!ancien) throw refus_('Cultivar à renommer manquant.');
+    if (!nouveau) throw refus_('Indiquez le nouveau nom du cultivar.');
+    if (ancien === nouveau) return { n: 0 };
+    const meres = rows_('Mères').filter(x => x.r[M.cult] === ancien);
+    if (!meres.length) return { n: 0 };   // déjà renommé (renvoi) : rien à faire
+    const nums = {};
+    meres.forEach(x => {
+      setCells_('Mères', x.row, M.cult, [nouveau]);
+      setCells_('Mères', x.row, M.modPar, [u.nom, now_()]);
+      nums[normNum_(x.r[M.num])] = 1;
+    });
+    rows_('Végétation').forEach(y => { if (nums[normNum_(y.r[2])] && y.r[4] === ancien) setCells_('Végétation', y.row, 4, [nouveau]); });
+    journal_(u.nom, 'renommage', 'cultivar', ancien, ancien + ' → ' + nouveau + ' · ' + meres.length + ' mère' + (meres.length > 1 ? 's' : ''));
+    return { n: meres.length };
+  });
+}
+
 /* ====================== Prises de boutures ====================== */
 
 /**
@@ -525,6 +547,7 @@ const API_ = {
   journal: (n, c, k) => journal(n, c, k),
   creerMere: (n, c, m, r) => creerMere(n, c, m, r),
   modifierMere: (n, c, num, ch, r) => modifierMere(n, c, num, ch, r),
+  renommerCultivar: (n, c, a, b, r) => renommerCultivar(n, c, a, b, r),
   prendreBoutures: (n, c, p, r) => prendreBoutures(n, c, p, r),
   supprimerBouture: (n, c, id, m, r) => supprimerBouture(n, c, id, m, r),
   detruire: (n, c, d, r) => detruire(n, c, d, r),
