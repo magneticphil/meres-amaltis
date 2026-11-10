@@ -268,7 +268,8 @@ function start(d) {
 /* Données du serveur (S.srv) + actions encore en file d'envoi = ce qui est affiché (S.d). */
 function apply(d) {
   S.srv = d; S.auth.nom = d.moi;
-  if (d.requetes) { const k = new Set(d.requetes), q = qGet(), r = q.filter(it => !k.has(it.id)); if (r.length !== q.length) qSet(r); }
+  if (d.requetes) { const k = new Set(d.requetes), q = qGet(), r = q.filter(it => !k.has(it.id)); if (r.length !== q.length) qSet(r);
+    S.confirmes = (S.confirmes || []).filter(it => !k.has(it.id)); }
   store('meres_data_' + S.auth.nom.toLowerCase(), d);
   $('who').textContent = d.moi;
   $('tab-journal').classList.toggle('hidden', d.role !== 'admin');
@@ -276,7 +277,6 @@ function apply(d) {
 }
 function recalc() { if (!S.srv) return; S.d = superposer(S.srv); render(); rappelFile(); }
 async function refresh(quiet) {
-  if (!$('ov').classList.contains('hidden')) return;
   try { apply(await run('charger')); if (!quiet) toast('À jour'); }
   catch (e) { if (/code invalide/i.test(errMsg(e))) logout(true); else if (!quiet) toast(errMsg(e)); }
 }
@@ -300,7 +300,7 @@ function superposer(srv) {
   const d = JSON.parse(JSON.stringify(srv)), moi = srv.moi;
   d.destructionsPlants = d.destructionsPlants || [];
   const trouve = num => d.meres.find(m => norm(m.numero) === norm(num));
-  qGet().forEach(it => {
+  (S.confirmes || []).concat(qGet()).forEach(it => {
     const a = it.args;
     if (it.fn === 'creerMere') {
       const n = norm(a[0].numero); if (trouve(n)) return;
@@ -312,6 +312,8 @@ function superposer(srv) {
       const m = trouve(a[0]); if (!m) return;
       ['surnom', 'emplacement', 'notes', 'cultivar', 'lot'].forEach(k => { if (k in a[1]) m[k] = String(a[1][k]).trim(); });
       if ('creation' in a[1] && a[1].creation !== m.creation) { m.creation = a[1].creation; m.source = a[1].creation ? 'saisie' : 'inconnue'; }
+    } else if (it.fn === 'renommerCultivar') {
+      d.meres.forEach(m => { if (m.cultivar === a[0]) m.cultivar = a[1]; });
     } else if (it.fn === 'prendreBoutures') {
       a[0].lignes.forEach((l, i) => { const m = trouve(l.numero);
         d.boutures.push({ id:'att-' + it.id + '-' + i, date:a[0].date, numero:m ? m.numero : l.numero, nb:String(l.nb), cultivar:m ? m.cultivar : '',
@@ -341,7 +343,7 @@ function superposer(srv) {
 }
 const LIBELLE = { creerMere:'Nouvelle mère', modifierMere:'Modification de fiche', prendreBoutures:'Prise de boutures', detruire:'Destruction',
   marquerRsdc:'RSDC complété', annulerDestruction:'Annulation de destruction', supprimerBouture:'Suppression de boutures',
-  detruirePlants:'Destruction de plants', annulerDestructionPlants:'Annulation de destruction de plants' };
+  detruirePlants:'Destruction de plants', renommerCultivar:'Renommage de cultivar', annulerDestructionPlants:'Annulation de destruction de plants' };
 let flushing = false, flushTimer = null, flushDelay = 3000, apresFile = null;
 function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flushOutbox, ms); }
 async function flushOutbox() {
@@ -353,6 +355,8 @@ async function flushOutbox() {
       const it = q[0];
       try {
         await run(it.fn, ...it.args, it.id);
+        // Confirmée : reste appliquée à l'écran jusqu'à ce que les données rechargées du serveur la contiennent.
+        (S.confirmes = S.confirmes || []).push(it);
         q = qGet().filter(x => x.id !== it.id); qSet(q); flushDelay = 3000; envoye = true;
       } catch (e) {
         // Seul un refus de contenu est définitif ; tout le reste (réseau, lenteur de Google, verrou, code) est réessayé.
@@ -395,7 +399,8 @@ function setVue(v) {
 function render() {
   if (!S.d) return;
   $('titre').textContent = { meres:'Plantes mères', boutures:'Boutures', destr:'Destructions', journal:'Journal' }[S.vue];
-  $('hdr-extra').innerHTML = S.vue === 'meres' ? hdrMeres() : '';
+  const saisie = document.activeElement && document.activeElement.id === 'q';
+  if (!(saisie && S.vue === 'meres')) $('hdr-extra').innerHTML = S.vue === 'meres' ? hdrMeres() : '';
   if (S.vue === 'meres') renderMeres();
   if (S.vue === 'boutures') renderBoutures();
   if (S.vue === 'destr') renderDestr();
@@ -408,7 +413,8 @@ function hdrMeres() {
   const chip = (k, lib, n) => '<button class="chip' + (S.cult === k ? ' on' : '') + '" data-cult="' + esc(k) + '">' + esc(lib) + (n != null ? '<small>' + n + '</small>' : '') + '</button>';
   return '<input class="search" id="q" type="search" placeholder="Rechercher : numéro, surnom, cultivar, lot" value="' + esc(S.q) + '">' +
     '<div class="chips">' + chip('Tous', 'Tous', act.length) +
-    Object.keys(cults).sort((a, b) => a.localeCompare(b, 'fr')).map(c => chip(c, c, cults[c])).join('') + '</div>';
+    Object.keys(cults).sort((a, b) => a.localeCompare(b, 'fr')).map(c => chip(c, c, cults[c])).join('') + '</div>' +
+    (isAdmin() && S.cult !== 'Tous' && cults[S.cult] ? '<button class="btn" data-renc="' + esc(S.cult) + '" style="margin-bottom:4px">Renommer le cultivar « ' + esc(S.cult) + ' » (' + cults[S.cult] + ' mère' + (cults[S.cult] > 1 ? 's' : '') + ')</button>' : '');
 }
 function renderMeres() {
   const act = actives(), det = S.d.meres.filter(m => m.statut !== 'active');
@@ -779,7 +785,23 @@ document.querySelector('.tabs').onclick = e => { const b = e.target.closest('[da
 $('fab').onclick = () => S.vue === 'meres' ? formMere() : S.vue === 'boutures' ? formPrise() : choixDestruction();
 $('ov').onclick = e => { if (e.target === $('ov') || e.target.closest('[data-close]')) fermer(); };
 $('hdr-extra').addEventListener('input', e => { if (e.target.id === 'q') { S.q = e.target.value; renderMeres(); } });
-$('hdr-extra').addEventListener('click', e => { const b = e.target.closest('[data-cult]'); if (b) { S.cult = b.dataset.cult; render(); } });
+$('hdr-extra').addEventListener('click', e => { const b = e.target.closest('[data-cult]'); if (b) { S.cult = b.dataset.cult; render(); return; }
+  const r = e.target.closest('[data-renc]'); if (r) formRenommer(r.dataset.renc); });
+function formRenommer(ancien) {
+  const n = S.d.meres.filter(m => m.cultivar === ancien).length;
+  ouvrir(tete('Renommer un cultivar') +
+    '<div class="meta">' + n + ' mère' + (n > 1 ? 's' : '') + ' (actives et détruites) portent « ' + esc(ancien) + ' ».</div>' +
+    '<label for="rc-nom">Nouveau nom</label><input id="rc-nom" type="text" list="dl-cult" value="' + esc(ancien) + '">' + datalistCult() +
+    '<div class="hint">Change le cultivar dans toutes ces fiches et dans le registre de végétation. Les prises de boutures déjà inscrites gardent leur libellé.</div>' +
+    pied('Renommer', 'rc-ok'));
+  $('rc-nom').select();
+  $('rc-ok').onclick = () => soumettre('rc-ok', async () => {
+    const nouveau = $('rc-nom').value.trim();
+    nonVide(nouveau, 'Indiquez le nouveau nom du cultivar.');
+    if (nouveau === ancien) { fermer(); return; }
+    enfiler('renommerCultivar', [ancien, nouveau]); S.cult = nouveau; fermer(); render(); toast('« ' + ancien + ' » renommé en « ' + nouveau + ' »');
+  });
+}
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb],[data-dlot],[data-andp]');
   if (!t) return;
