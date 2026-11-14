@@ -12,6 +12,9 @@
  *                  depuis mars 2025, Santé Canada n'exige que le nombre de plants détruits : ni poids ni témoins)
  *   Boutures     : (onglet existant, lu par registre_bv.py) + colonne I « ID »
  *   Végétation   : (onglet existant, lu par registre_bv.py) — tenu à jour automatiquement, une ligne par mère
+ *   Lots         : Lot | Salle | Round | Cycle | Mise en 4 pouces | Transfert | Plants transférés | Notes |
+ *                  Créé par | Créé le | Modifié par | Modifié le
+ *                  (rattachement lot de boutures → salle de destination et round ; Cycle = ID du cycle dans le calendrier)
  *   Témoins      : Nom | Habilitation | Actif      (personnes habilitées à témoigner d'une destruction)
  *   Paramètres   : Clé | Valeur
  *   Journal      : Horodatage | Employé | Action | Objet | ID | Détails | Requête   (ajout seulement, jamais modifié)
@@ -39,6 +42,8 @@ const HEAD = {
     'Responsable', 'Notes'],
   'Destructions plants': ['ID', 'Date', 'Lot', 'Étape', 'Salle', 'Nombre de plants', 'Raison', 'Notes', 'Saisi par', 'Saisi le',
     'Statut', 'Annulé par', 'Annulé le', "Motif d'annulation"],
+  'Lots': ['Lot', 'Salle', 'Round', 'Cycle', 'Mise en 4 pouces', 'Transfert', 'Plants transférés', 'Notes',
+    'Créé par', 'Créé le', 'Modifié par', 'Modifié le'],
   'Témoins': ['Nom', 'Habilitation', 'Actif'],
   'Paramètres': ['Clé', 'Valeur'],
   'Journal': ['Horodatage', 'Employé', 'Action', 'Objet', 'ID', 'Détails', 'Requête'],
@@ -238,6 +243,8 @@ function charger(nom, code) {
     boutures: rows_('Boutures').map(boutureDto_).filter(b => b.date >= depuis),
     destructions: rows_('Destructions').map(destructionDto_),
     destructionsPlants: rows_('Destructions plants').map(destructionPlantsDto_),
+    lots: rows_('Lots').map(lotDto_),
+    cycles: cycles_(),
     temoins: rows_('Témoins').filter(x => x.r[0] && (x.r[2] === '' || yes_(x.r[2]))).map(x => ({ nom: x.r[0], habilitation: x.r[1] })),
     employes: employes_().map(e => e.nom),
     methodes: p.methodes, salles: p.salles,
@@ -386,6 +393,9 @@ function prendreBoutures(nom, code, p, requestId) {
     const total = res.reduce((s, b) => s + +b.nb, 0);
     journal_(u.nom, 'création', 'boutures', lot, date + ' · ' + salle + ' · ' + total + ' boutures · ' +
       res.map(b => b.numero + ' ×' + b.nb).join(', '));
+    // Rattachement du lot à la salle et au round de destination (s'il n'existe pas encore)
+    if ((p.round || p.cycle) && !rows_('Lots').some(x => normLot_(x.r[0]) === normLot_(lot)))
+      lierLot_(u, { lot, salle, round: p.round || '', cycle: p.cycle || '' });
     return res;
   });
 }
@@ -480,6 +490,87 @@ function annulerDestruction(nom, code, id, motif, requestId) {
   });
 }
 
+/* ====================== Lots : rattachement salle 1 → salle de destination ====================== */
+
+/** « salle # 4 », « Salle 4 », « S4 » → « Salle 4 » */
+function normSalle_(s) { const m = /(\d+)/.exec(String(s || '')); return m ? 'Salle ' + (+m[1]) : txt_(s, 30); }
+function lotDto_(x) {
+  const r = x.r;
+  return { lot: r[0], salle: r[1], round: r[2], cycle: r[3], date4po: r[4], transfert: r[5], transferes: r[6], notes: r[7],
+    creePar: r[8], creeLe: r[9], modPar: r[10], modLe: r[11] };
+}
+/** Rounds des grandes salles, lus dans l'onglet Cycles du calendrier (lecture seule). */
+function cycles_() {
+  const c = CacheService.getScriptCache(), hit = c.get('cycles');
+  if (hit) return JSON.parse(hit);
+  let v = [];
+  try {
+    const sh = SpreadsheetApp.openById(EMP_SHEET_ID).getSheetByName('Cycles');
+    const n = sh ? sh.getLastRow() - 1 : 0;
+    if (n > 0) v = sh.getRange(2, 1, n, 15).getDisplayValues()
+      .map(r => r.map(x => String(x).trim()))
+      .filter(r => r[0] && /^Salle [2-9]$/.test(normSalle_(r[1])) && r[13] !== 'lot' && r[7] !== 'annulé')
+      .map(r => ({ id: r[0], salle: normSalle_(r[1]), round: r[14], debut: r[3], floraison: r[4], recolte: r[5], fin: r[6] }));
+  } catch (e) { v = []; }   // le calendrier est indisponible : on travaille sans la liste des rounds
+  try { c.put('cycles', JSON.stringify(v), 300); } catch (e) {}
+  return v;
+}
+/**
+ * Crée ou met à jour le rattachement d'un lot. l = { lot, salle, round, cycle, date4po, transfert, transferes, notes }
+ * Seuls les champs présents dans l sont modifiés.
+ */
+function lierLot_(u, l) {
+  l = l || {};
+  const lotN = normLot_(l.lot);
+  const bout = rows_('Boutures').filter(x => normLot_(x.r[5]) === lotN);
+  if (!lotN || !bout.length) throw refus_('Lot inconnu dans les boutures : ' + txt_(l.lot, 40) + '.');
+  const lot = bout[0].r[5];
+  const premiere = bout.map(x => normDate_(x.r[0])).filter(isDate_).sort()[0] || '';
+  const ex = rows_('Lots').find(x => normLot_(x.r[0]) === lotN);
+  const avant = ex ? ex.r.slice() : [lot, normSalle_(bout[0].r[4]), '', '', '', '', '', '', u.nom, now_(), '', ''];
+  const apres = avant.slice(); apres[0] = lot;
+  const has = k => Object.prototype.hasOwnProperty.call(l, k);
+  if (has('salle')) apres[1] = normSalle_(l.salle);
+  if (has('round')) apres[2] = txt_(l.round, 30);
+  if (has('cycle')) apres[3] = txt_(l.cycle, 20);
+  if (has('date4po')) apres[4] = txt_(l.date4po, 10);
+  if (has('transfert')) apres[5] = txt_(l.transfert, 10);
+  if (has('transferes')) apres[6] = String(l.transferes === '' || l.transferes == null ? '' : l.transferes).trim();
+  if (has('notes')) apres[7] = txt_(l.notes, 300);
+  if (!apres[1]) throw refus_('Choisissez la salle de destination.');
+  [[4, 'mise en 4 pouces'], [5, 'transfert']].forEach(([i, nomD]) => {
+    if (!apres[i]) return;
+    if (!isDate_(apres[i])) throw refus_('Date de ' + nomD + ' invalide.');
+    if (apres[i] > today_()) throw refus_('La date de ' + nomD + ' ne peut pas être dans le futur.');
+    if (premiere && apres[i] < premiere) throw refus_('La date de ' + nomD + ' précède la prise de boutures du lot (' + premiere + ').');
+  });
+  if (apres[4] && apres[5] && apres[5] < apres[4]) throw refus_('Le transfert ne peut pas précéder la mise en 4 pouces.');
+  if (apres[6] !== '') {
+    const n = Number(apres[6]);
+    if (!Number.isInteger(n) || n < 0) throw refus_('Le nombre de plants transférés doit être un entier positif.');
+    const preleves = bout.reduce((s, x) => s + (parseFloat(String(x.r[2]).replace(',', '.')) || 0), 0);
+    if (n > preleves) throw refus_('Plus de plants transférés (' + n + ') que de boutures prélevées (' + preleves + ').');
+  }
+  if (apres[3]) {
+    const c = cycles_().find(y => y.id === apres[3]);
+    if (c && c.salle !== apres[1]) throw refus_('Ce round appartient à ' + c.salle + ', pas à ' + apres[1] + '.');
+    if (c && !apres[2]) apres[2] = c.round;
+  }
+  const libelles = { 1: 'salle', 2: 'round', 3: 'cycle', 4: 'mise en 4 po', 5: 'transfert', 6: 'transférés', 7: 'notes' };
+  const diff = Object.keys(libelles).map(Number).filter(i => apres[i] !== avant[i] || !ex)
+    .filter(i => apres[i] !== '' || avant[i] !== '')
+    .map(i => libelles[i] + ' : ' + (ex ? (avant[i] || '∅') + ' → ' : '') + (apres[i] || '∅'));
+  if (ex && !diff.length) return lotDto_({ r: apres });
+  if (ex) { apres[10] = u.nom; apres[11] = now_(); setCells_('Lots', ex.row, 0, apres); }
+  else append_('Lots', apres);
+  journal_(u.nom, ex ? 'modification' : 'rattachement', 'lot', lot, diff.join(' · '));
+  return lotDto_({ r: apres });
+}
+function lierLot(nom, code, l, requestId) {
+  const u = auth_(nom, code);
+  return action_(requestId, () => lierLot_(u, l));
+}
+
 /* ====================== Destructions de plants par lot ====================== */
 
 const ETAPES_ = ['Boutures non plantées', '4 pouces', 'En salle'];
@@ -554,6 +645,7 @@ const API_ = {
   marquerRsdc: (n, c, id, r) => marquerRsdc(n, c, id, r),
   annulerDestruction: (n, c, id, m, r) => annulerDestruction(n, c, id, m, r),
   detruirePlants: (n, c, d, r) => detruirePlants(n, c, d, r),
+  lierLot: (n, c, l, r) => lierLot(n, c, l, r),
   annulerDestructionPlants: (n, c, id, m, r) => annulerDestructionPlants(n, c, id, m, r),
 };
 function doPost(e) {
