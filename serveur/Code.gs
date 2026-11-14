@@ -236,11 +236,10 @@ function parametres_() {
 function charger(nom, code) {
   const u = auth_(nom, code);
   const p = parametres_();
-  const depuis = Utilities.formatDate(new Date(Date.now() - 400 * 864e5), TZ, 'yyyy-MM-dd');
   return {
     moi: u.nom, role: u.role, today: today_(),
     meres: rows_('Mères').filter(x => x.r[M.num]).map(mereDto_),
-    boutures: rows_('Boutures').map(boutureDto_).filter(b => b.date >= depuis),
+    boutures: rows_('Boutures').map(boutureDto_),   // tout l'historique : la traçabilité d'un lot ancien doit rester complète
     destructions: rows_('Destructions').map(destructionDto_),
     destructionsPlants: rows_('Destructions plants').map(destructionPlantsDto_),
     lots: rows_('Lots').map(lotDto_),
@@ -394,8 +393,11 @@ function prendreBoutures(nom, code, p, requestId) {
     journal_(u.nom, 'création', 'boutures', lot, date + ' · ' + salle + ' · ' + total + ' boutures · ' +
       res.map(b => b.numero + ' ×' + b.nb).join(', '));
     // Rattachement du lot à la salle et au round de destination (s'il n'existe pas encore)
-    if ((p.round || p.cycle) && !rows_('Lots').some(x => normLot_(x.r[0]) === normLot_(lot)))
-      lierLot_(u, { lot, salle, round: p.round || '', cycle: p.cycle || '' });
+    // La prise est déjà enregistrée : un rattachement refusé ne doit pas la faire paraître en échec.
+    if ((p.round || p.cycle) && !rows_('Lots').some(x => normLot_(x.r[0]) === normLot_(lot))) {
+      try { lierLot_(u, { lot, salle, round: p.round || '', cycle: p.cycle || '' }); }
+      catch (e) { journal_(u.nom, 'rattachement refusé', 'lot', lot, String(e && e.message || e) + ' · à rattacher depuis l\'onglet Boutures'); }
+    }
     return res;
   });
 }
