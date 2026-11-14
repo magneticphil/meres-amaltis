@@ -242,6 +242,15 @@ const normSalle = s => { const m = /(\d+)/.exec(String(s || '')); return m ? 'Sa
 const numRound = s => { const m = /(\d+)/.exec(String(s || '')); return m ? +m[1] : null; };
 const cyclesDe = salle => (S.d.cycles || []).filter(c => c.salle === normSalle(salle)).sort((a, b) => (b.debut || '').localeCompare(a.debut || ''));
 const cycle = id => (S.d.cycles || []).find(c => c.id === id);
+/* Round d'un lot rattaché : par son identifiant de cycle, sinon par la salle et le numéro de round
+   (round saisi avant sa création au calendrier, ou cycle recréé sous un autre identifiant). */
+function cycleDe(lien) {
+  if (!lien) return null;
+  const c = lien.cycle && cycle(lien.cycle); if (c) return c;
+  const n = numRound(lien.round); if (n == null) return null;
+  const cs = cyclesDe(lien.salle).filter(c => numRound(c.round) === n);
+  return cs.length === 1 ? cs[0] : null;
+}
 /* Round proposé pour un lot : d'après son nom (S4R15 → Salle 4, round 15), sinon le premier round de la salle qui débute après la prise. */
 function roundPropose(x) {
   const n = /^S(\d+)R(\d+)$/.exec(normLot(x.lot)), salle = n ? 'Salle ' + (+n[1]) : normSalle(x.salle);
@@ -511,11 +520,13 @@ function avertTransfert(x, ajout) {
     ' habituellement. Normal pour la salle 7, qui en reçoit moins ; sinon, vérifiez le nombre.</div>';
 }
 function renderBoutures() {
-  const L = lots();
+  const tous = lots(), limite = addDays(S.d.today, -400);
+  const L = S.anciens ? tous : tous.filter(x => x.fin >= limite), caches = tous.length - L.length;
   const tot30 = S.d.boutures.filter(b => b.date >= addDays(S.d.today, -30)).reduce((s, b) => s + (+b.nb || 0), 0);
   $('v-boutures').innerHTML =
     '<div class="stats"><div class="stat"><b>' + tot30 + '</b><span>boutures (30 derniers jours)</span></div>' +
-    '<div class="stat"><b>' + L.length + '</b><span>lots (13 mois)</span></div></div>' +
+    '<div class="stat"><b>' + L.length + '</b><span>' + (S.anciens ? 'lots (tout l\'historique)' : 'lots (13 mois)') + '</span></div></div>' +
+    (caches || S.anciens ? '<div class="chips"><button class="chip' + (S.anciens ? ' on' : '') + '" data-anciens="1">' + (S.anciens ? 'Masquer les lots de plus de 13 mois' : 'Afficher les ' + caches + ' lot' + (caches > 1 ? 's' : '') + ' plus ancien' + (caches > 1 ? 's' : '')) + '</button></div>' : '') +
     (L.length ? L.map(x => {
       const prises = x.prises.slice().sort((a, b) => b.date.localeCompare(a.date));
       const dest = x.destructions.slice().sort((a, b) => b.date.localeCompare(a.date));
@@ -536,7 +547,7 @@ function renderBoutures() {
 function ligneLien(x) {
   const l = x.lien;
   if (!l) return '<div class="meta" style="margin-bottom:4px"><span class="tag warn">non rattaché</span> salle et round de destination à préciser</div>';
-  const c = cycle(l.cycle);
+  const c = cycleDe(l);
   return '<div class="meta" style="margin-bottom:4px"><span class="tag ok">→ ' + esc(l.salle) + (l.round ? ' · ' + esc(l.round) : '') + '</span>' +
     (l.date4po ? ' · 4 po le ' + esc(fDate(l.date4po)) : '') +
     (l.transfert ? ' · transféré le ' + esc(fDate(l.transfert)) + (l.transferes ? ' (' + pl(+l.transferes) + ')' : '') : c && c.debut ? ' · début du round le ' + esc(fDate(c.debut)) : '') + '</div>';
@@ -546,7 +557,8 @@ function ligneLien(x) {
 function formLot(cle) {
   const x = lots().find(y => y.cle === cle); if (!x) return;
   const l = x.lien || {}, prop = roundPropose(x);
-  const salle0 = l.salle || prop.salle, cycle0 = x.lien ? l.cycle : prop.cycle, round0 = x.lien ? l.round : prop.round;
+  const c0 = x.lien ? cycleDe(l) : null;
+  const salle0 = l.salle || prop.salle, cycle0 = x.lien ? (c0 ? c0.id : '') : prop.cycle, round0 = x.lien ? l.round : prop.round;
   const salles = [...new Set(S.d.salles.map(normSalle).concat(salle0 ? [salle0] : []))];
   ouvrir(tete('Rattacher le lot ' + esc(x.lot)) +
     '<div class="meta">' + x.preleves + ' boutures prélevées le ' + esc(fDate(x.debut)) + (x.fin !== x.debut ? ' au ' + esc(fDate(x.fin)) : '') + '.</div>' +
@@ -595,7 +607,7 @@ function formLot(cle) {
 
 /* Traçabilité d'un lot : mères → prise de boutures → 4 pouces → transfert → salle et round */
 function traceTexte(x) {
-  const l = x.lien || {}, c = cycle(l.cycle), lignes = [];
+  const l = x.lien || {}, c = cycleDe(x.lien), lignes = [];
   lignes.push('Lot ' + x.lot + (l.salle ? ' → ' + l.salle + (l.round ? ', ' + l.round : '') : ' (non rattaché)'));
   const parMere = {};
   x.prises.forEach(b => { const m = mereDe(b.numero), k = m ? m.numero : b.numero;
@@ -611,7 +623,7 @@ function traceTexte(x) {
 }
 function trace(cle) {
   const x = lots().find(y => y.cle === cle); if (!x) return;
-  const l = x.lien || {}, c = cycle(l.cycle);
+  const l = x.lien || {}, c = cycleDe(x.lien);
   const parMere = {};
   x.prises.forEach(b => { const m = mereDe(b.numero), k = m ? m.numero : b.numero;
     (parMere[k] = parMere[k] || { m, num:k, nb:0, dates:new Set() }).nb += +b.nb || 0; parMere[k].dates.add(b.date); });
@@ -722,7 +734,7 @@ function fiche(num) {
     (m.statut === 'active' ? '<div class="foot"><button class="btn pri" data-prise="' + esc(m.numero) + '">Prise de boutures</button><button class="btn dan" data-detr="' + esc(m.numero) + '">Détruire</button></div>' : '') +
     '<div class="foot" style="margin-top:8px"><button class="btn" data-modif="' + esc(m.numero) + '">Modifier la fiche</button></div>' +
     (ds ? '<h2>Destruction</h2><div class="kv"><div><span>Date</span><b>' + fDate(ds.date) + '</b></div><div><span>Poids</span><b>' + esc(ds.poids) + ' g</b></div><div><span>Méthode</span><b>' + esc(ds.methode) + '</b></div><div><span>Raison</span><b>' + esc(ds.raison) + '</b></div><div><span>Témoins</span><b>' + esc(ds.temoin1) + ', ' + esc(ds.temoin2) + '</b></div><div><span>RSDC</span><b>' + (ds.rsdc === 'oui' ? 'complété' : 'à compléter') + '</b></div></div>' : '') +
-    '<h2>Boutures <small>' + tot + ' sur 13 mois</small></h2>' +
+    '<h2>Boutures <small>' + tot + ' au total</small></h2>' +
     (bt.length ? '<div class="kv">' + bt.map(b => '<div><span>' + fDate(b.date) + ' · ' + esc(b.salle) + ' · lot ' + esc(b.lot) + '</span><b>×' + esc(b.nb) + '</b></div>').join('') + '</div>' : '<div class="empty">Aucune prise inscrite.</div>') +
     (lesLots.length ? '<h2>Lots et salles de destination</h2>' + lesLots.map(x => '<div class="card tap" data-trace="' + esc(x.cle) + '"><div class="bar"></div><div class="body"><div class="ttl">Lot ' + esc(x.lot) + '</div>' + ligneLien(x) + '</div></div>').join('') : '') +
     (enfants.length ? '<h2>Mères issues de celle-ci</h2>' + enfants.map(carteMere).join('') : ''));
@@ -954,7 +966,7 @@ function formRenommer(ancien) {
   });
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb],[data-dlot],[data-andp],[data-trace],[data-lier]');
+  const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb],[data-dlot],[data-andp],[data-trace],[data-lier],[data-anciens]');
   if (!t) return;
   const d = t.dataset;
   if (d.filtre) { S.filtre = d.filtre; renderMeres(); }
@@ -962,6 +974,7 @@ document.addEventListener('click', e => {
   else if (d.prise) formPrise(d.prise);
   else if (d.detr !== undefined) formDetr(d.detr);
   else if (d.dlot !== undefined) formDetrPlants(d.dlot);
+  else if (d.anciens) { S.anciens = !S.anciens; renderBoutures(); }
   else if (d.trace) trace(d.trace);
   else if (d.lier) formLot(d.lier);
   else if (d.andp) formMotif('Annuler la destruction de plants', 'Annuler la destruction', m => { enfiler('annulerDestructionPlants', [d.andp, m]); toast('Destruction annulée'); });
