@@ -228,6 +228,28 @@ const lotDuNumero = n => { const i = n.lastIndexOf('_'); return i > 0 ? n.slice(
 const abrege = n => { const m = /^\d{8}(\d{4})_(.+)$/.exec(n); return m ? m[1] + '_' + m[2] : n; };
 const nomMere = m => (m.surnom ? m.surnom + ' · ' : '') + m.cultivar;
 const mere = num => S.d.meres.find(m => norm(m.numero) === norm(num));
+/* Mère d'une prise de boutures : numéro exact, ou forme abrégée (001_007B → 62040001_007B) quand une seule mère du même lot
+   porte le même rang (derniers chiffres). */
+function mereDe(num) {
+  const m = mere(num); if (m) return m;
+  const p = /^(\d+)_([0-9A-Z]+)$/.exec(norm(num)); if (!p) return null;
+  const rang = +p[1].slice(-4);
+  const c = S.d.meres.filter(x => { const q = /^(\d+)_([0-9A-Z]+)$/.exec(norm(x.numero));
+    return q && q[2] === p[2] && q[1].length > p[1].length && +q[1].slice(-4) === rang; });
+  return c.length === 1 ? c[0] : null;
+}
+const normSalle = s => { const m = /(\d+)/.exec(String(s || '')); return m ? 'Salle ' + (+m[1]) : String(s || '').trim(); };
+const numRound = s => { const m = /(\d+)/.exec(String(s || '')); return m ? +m[1] : null; };
+const cyclesDe = salle => (S.d.cycles || []).filter(c => c.salle === normSalle(salle)).sort((a, b) => (b.debut || '').localeCompare(a.debut || ''));
+const cycle = id => (S.d.cycles || []).find(c => c.id === id);
+/* Round proposé pour un lot : d'après son nom (S4R15 → Salle 4, round 15), sinon le premier round de la salle qui débute après la prise. */
+function roundPropose(x) {
+  const n = /^S(\d+)R(\d+)$/.exec(normLot(x.lot)), salle = n ? 'Salle ' + (+n[1]) : normSalle(x.salle);
+  const cs = cyclesDe(salle);
+  let c = n ? cs.find(c => numRound(c.round) === +n[2]) : null;
+  if (!c && !n) c = cs.slice().reverse().find(c => c.debut && c.debut >= x.debut);
+  return { salle, round: c ? c.round : n ? 'round ' + (+n[2]) : '', cycle: c ? c.id : '' };
+}
 const actives = () => S.d.meres.filter(m => m.statut === 'active');
 const isAdmin = () => S.d && S.d.role === 'admin';
 
@@ -298,7 +320,12 @@ function enfiler(fn, args) {
 /* Applique les actions en attente sur une copie des données du serveur. */
 function superposer(srv) {
   const d = JSON.parse(JSON.stringify(srv)), moi = srv.moi;
-  d.destructionsPlants = d.destructionsPlants || [];
+  d.destructionsPlants = d.destructionsPlants || []; d.lots = d.lots || []; d.cycles = d.cycles || [];
+  const lierLocal = (l, it) => { let x = d.lots.find(y => normLot(y.lot) === normLot(l.lot));
+    if (!x) { x = { lot:l.lot, salle:'', round:'', cycle:'', date4po:'', transfert:'', transferes:'', notes:'', creePar:moi, creeLe:it.at }; d.lots.push(x); }
+    ['salle', 'round', 'cycle', 'date4po', 'transfert', 'transferes', 'notes'].forEach(k => { if (k in l) x[k] = k === 'salle' ? normSalle(l[k]) : String(l[k] == null ? '' : l[k]).trim(); });
+    if (x.cycle && !x.round) { const c = d.cycles.find(y => y.id === x.cycle); if (c) x.round = c.round; }
+    x.queued = true; };
   const trouve = num => d.meres.find(m => norm(m.numero) === norm(num));
   (S.confirmes || []).concat(qGet()).forEach(it => {
     const a = it.args;
@@ -318,6 +345,9 @@ function superposer(srv) {
       a[0].lignes.forEach((l, i) => { const m = trouve(l.numero);
         d.boutures.push({ id:'att-' + it.id + '-' + i, date:a[0].date, numero:m ? m.numero : l.numero, nb:String(l.nb), cultivar:m ? m.cultivar : '',
           salle:a[0].salle, lot:a[0].lot, par:moi, notes:a[0].notes || '', queued:true }); });
+      if ((a[0].round || a[0].cycle) && !d.lots.some(y => normLot(y.lot) === normLot(a[0].lot))) lierLocal({ lot:a[0].lot, salle:a[0].salle, round:a[0].round || '', cycle:a[0].cycle || '' }, it);
+    } else if (it.fn === 'lierLot') {
+      lierLocal(a[0], it);
     } else if (it.fn === 'detruire') {
       const m = trouve(a[0].numero); if (!m) return;
       d.destructions.push({ id:'att-' + it.id, date:a[0].date, numero:m.numero, lot:m.lot, cultivar:m.cultivar, poids:String(a[0].poids).replace(',', '.'),
@@ -343,7 +373,7 @@ function superposer(srv) {
 }
 const LIBELLE = { creerMere:'Nouvelle mère', modifierMere:'Modification de fiche', prendreBoutures:'Prise de boutures', detruire:'Destruction',
   marquerRsdc:'RSDC complété', annulerDestruction:'Annulation de destruction', supprimerBouture:'Suppression de boutures',
-  detruirePlants:'Destruction de plants', renommerCultivar:'Renommage de cultivar', annulerDestructionPlants:'Annulation de destruction de plants' };
+  detruirePlants:'Destruction de plants', renommerCultivar:'Renommage de cultivar', lierLot:'Rattachement du lot', annulerDestructionPlants:'Annulation de destruction de plants' };
 let flushing = false, flushTimer = null, flushDelay = 3000, apresFile = null;
 function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flushOutbox, ms); }
 async function flushOutbox() {
@@ -456,7 +486,9 @@ function lots() {
     if (b.date < x.debut) x.debut = b.date; if (b.date > x.fin) x.fin = b.date; });
   (S.d.destructionsPlants || []).forEach(d => { const x = L[normLot(d.lot)]; if (!x) return; x.destructions.push(d);
     if (d.statut !== 'annulée') x.detruits[d.etape] = (x.detruits[d.etape] || 0) + (+d.nombre || 0); });
-  Object.values(L).forEach(x => { x.totalDetruits = Object.values(x.detruits).reduce((s, n) => s + n, 0); x.restants = x.preleves - x.totalDetruits; });
+  Object.values(L).forEach(x => { x.totalDetruits = Object.values(x.detruits).reduce((s, n) => s + n, 0); x.restants = x.preleves - x.totalDetruits;
+    x.lien = (S.d.lots || []).find(l => normLot(l.lot) === x.cle) || null;
+    x.avantTransfert = x.preleves - (x.detruits['Boutures non plantées'] || 0) - (x.detruits['4 pouces'] || 0); });
   return Object.values(L).sort((a, b) => b.fin.localeCompare(a.fin) || a.lot.localeCompare(b.lot));
 }
 const pl = n => n + ' plant' + (Math.abs(n) > 1 ? 's' : '');
@@ -490,12 +522,120 @@ function renderBoutures() {
       return '<div class="grp"><div class="grp-h"><b>Lot ' + esc(x.lot) + ' · ' + esc(x.salle) + '</b><span class="tag gold">' + x.preleves + ' boutures</span></div>' +
         '<div class="meta">Prélevées le ' + esc(fDate(x.debut)) + (x.fin !== x.debut ? ' au ' + esc(fDate(x.fin)) : '') +
         (x.totalDetruits ? ' · ' + x.totalDetruits + ' détruites · <b>' + x.restants + ' restantes</b>' : '') + '</div><div class="grp-l">' +
-        prises.map(b => { const m = mere(b.numero);
-          return '<div><span>' + esc(fDate(b.date)) + ' · ' + (m && m.surnom ? '<b>' + esc(m.surnom) + '</b> ' : '') + '<span class="num">' + esc(m ? abrege(b.numero) : b.numero) + '</span></span><span>×' + esc(b.nb) +
+        ligneLien(x) +
+        prises.map(b => { const m = mereDe(b.numero);
+          return '<div><span>' + esc(fDate(b.date)) + ' · ' + (m && m.surnom ? '<b>' + esc(m.surnom) + '</b> ' : '') + '<span class="num">' + esc(m ? abrege(m.numero) : b.numero) + '</span></span><span>×' + esc(b.nb) +
             (isAdmin() && b.id && !b.queued ? ' <button class="btn dan" style="padding:0 6px;font-size:12px" data-supb="' + esc(b.id) + '">✕</button>' : '') + '</span></div>'; }).join('') +
         dest.map(d => '<div' + (d.statut === 'annulée' ? ' style="opacity:.5;text-decoration:line-through"' : '') + '><span>' + esc(fDate(d.date)) + ' · détruites (' + esc(d.etape) + ')</span><span style="color:var(--warn)">−' + esc(d.nombre) + '</span></div>').join('') +
-        '</div><div class="acts"><button class="btn" data-dlot="' + esc(x.cle) + '">Détruire des plants</button></div></div>';
+        '</div><div class="acts"><button class="btn pri" data-trace="' + esc(x.cle) + '">Traçabilité</button>' +
+        '<button class="btn" data-lier="' + esc(x.cle) + '">' + (x.lien ? 'Modifier le rattachement' : 'Rattacher à une salle') + '</button>' +
+        '<button class="btn" data-dlot="' + esc(x.cle) + '">Détruire des plants</button></div></div>';
     }).join('') : '<div class="empty">Aucune prise de boutures sur les 13 derniers mois.</div>');
+}
+/* Ligne « → Salle 4 · round 15 · transfert le … » sous l'en-tête du lot */
+function ligneLien(x) {
+  const l = x.lien;
+  if (!l) return '<div class="meta" style="margin-bottom:4px"><span class="tag warn">non rattaché</span> salle et round de destination à préciser</div>';
+  const c = cycle(l.cycle);
+  return '<div class="meta" style="margin-bottom:4px"><span class="tag ok">→ ' + esc(l.salle) + (l.round ? ' · ' + esc(l.round) : '') + '</span>' +
+    (l.date4po ? ' · 4 po le ' + esc(fDate(l.date4po)) : '') +
+    (l.transfert ? ' · transféré le ' + esc(fDate(l.transfert)) + (l.transferes ? ' (' + pl(+l.transferes) + ')' : '') : c && c.debut ? ' · début du round le ' + esc(fDate(c.debut)) : '') + '</div>';
+}
+
+/* Rattachement d'un lot : salle et round de destination, mise en 4 pouces, transfert */
+function formLot(cle) {
+  const x = lots().find(y => y.cle === cle); if (!x) return;
+  const l = x.lien || {}, prop = roundPropose(x);
+  const salle0 = l.salle || prop.salle, cycle0 = x.lien ? l.cycle : prop.cycle, round0 = x.lien ? l.round : prop.round;
+  const salles = [...new Set(S.d.salles.map(normSalle).concat(salle0 ? [salle0] : []))];
+  ouvrir(tete('Rattacher le lot ' + esc(x.lot)) +
+    '<div class="meta">' + x.preleves + ' boutures prélevées le ' + esc(fDate(x.debut)) + (x.fin !== x.debut ? ' au ' + esc(fDate(x.fin)) : '') + '.</div>' +
+    '<div class="two"><div><label for="l-salle">Salle de destination</label><select id="l-salle">' + salles.map(s => '<option' + (s === salle0 ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></div>' +
+    '<div><label for="l-cycle">Round</label><select id="l-cycle"></select></div></div>' +
+    '<input id="l-round" type="text" placeholder="Round (ex. round 16)" style="margin-top:8px" class="hidden">' +
+    '<div class="hint" id="l-hint"></div>' +
+    '<div class="two"><div><label for="l-4po">Mise en 4 pouces</label><input id="l-4po" type="date" max="' + S.d.today + '" value="' + esc(l.date4po || '') + '"></div>' +
+    '<div><label for="l-tr">Transfert en salle</label><input id="l-tr" type="date" max="' + S.d.today + '" value="' + esc(l.transfert || '') + '"></div></div>' +
+    '<label for="l-nb">Plants transférés</label><input id="l-nb" type="number" inputmode="numeric" min="0" step="1" value="' + esc(l.transferes || '') + '" placeholder="' + x.avantTransfert + '">' +
+    '<div class="hint">Restants avant transfert d\'après les destructions inscrites : ' + pl(x.avantTransfert) + '. <a href="#" id="l-nb-auto">Reprendre ce nombre</a></div>' +
+    '<label for="l-notes">Notes</label><input id="l-notes" type="text" value="' + esc(l.notes || '') + '">' +
+    pied('Enregistrer', 'l-ok'));
+  const majCycles = () => {
+    const cs = cyclesDe($('l-salle').value), sel = $('l-cycle').value || cycle0;
+    $('l-cycle').innerHTML = cs.map(c => '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.round || '?') + (c.debut ? ' — début ' + esc(fDate(c.debut)) : '') + '</option>').join('') +
+      '<option value=""' + (!cs.some(c => c.id === sel) ? ' selected' : '') + '>Autre (pas encore au calendrier)</option>';
+    majRound();
+  };
+  const majRound = () => {
+    const c = cycle($('l-cycle').value), autre = !c;
+    $('l-round').classList.toggle('hidden', !autre);
+    if (autre && !$('l-round').value) $('l-round').value = cycle0 ? '' : round0;
+    $('l-hint').textContent = c ? 'Round du calendrier : début ' + fDate(c.debut) + (c.floraison ? ' · floraison ' + fDate(c.floraison) : '') + (c.recolte ? ' · récolte prévue ' + fDate(c.recolte) : '') : 'Ce round n\'est pas encore créé dans le calendrier : inscrivez son numéro.';
+  };
+  $('l-salle').onchange = () => { $('l-cycle').value = ''; majCycles(); };
+  $('l-cycle').onchange = majRound;
+  $('l-nb-auto').onclick = e => { e.preventDefault(); $('l-nb').value = x.avantTransfert; $('l-nb').dispatchEvent(new Event('input')); };
+  $('l-nb').addEventListener('input', () => { const v = $('l-nb').value.trim(), h = $('l-nb').nextElementSibling;
+    h.className = 'hint' + (v !== '' && +v !== x.avantTransfert ? ' bad' : '');
+    if (v !== '' && +v !== x.avantTransfert) h.firstChild.textContent = 'Écart avec les restants avant transfert (' + pl(x.avantTransfert) + ') : inscrivez les destructions manquantes, ou vérifiez le compte. ';
+    else h.firstChild.textContent = 'Restants avant transfert d\'après les destructions inscrites : ' + pl(x.avantTransfert) + '. '; });
+  majCycles();
+  $('l-ok').onclick = () => soumettre('l-ok', async () => {
+    const c = cycle($('l-cycle').value), d4 = $('l-4po').value, tr = $('l-tr').value, nb = $('l-nb').value.trim();
+    const round = c ? c.round : $('l-round').value.trim();
+    if (d4) { pasFutur(d4); if (d4 < x.debut) throw new Error('La mise en 4 pouces précède la prise de boutures (' + fDate(x.debut) + ').'); }
+    if (tr) { pasFutur(tr); if (tr < x.debut) throw new Error('Le transfert précède la prise de boutures (' + fDate(x.debut) + ').'); }
+    if (d4 && tr && tr < d4) throw new Error('Le transfert ne peut pas précéder la mise en 4 pouces.');
+    if (nb !== '' && (!Number.isInteger(+nb) || +nb < 0)) throw new Error('Le nombre de plants transférés doit être un entier positif.');
+    if (nb !== '' && +nb > x.preleves) throw new Error('Plus de plants transférés que de boutures prélevées (' + x.preleves + ').');
+    enfiler('lierLot', [{ lot:x.lot, salle:$('l-salle').value, round, cycle:c ? c.id : '', date4po:d4, transfert:tr, transferes:nb, notes:$('l-notes').value.trim() }]);
+    fermer(); toast('Lot ' + x.lot + ' → ' + $('l-salle').value + (round ? ' · ' + round : ''));
+  });
+}
+
+/* Traçabilité d'un lot : mères → prise de boutures → 4 pouces → transfert → salle et round */
+function traceTexte(x) {
+  const l = x.lien || {}, c = cycle(l.cycle), lignes = [];
+  lignes.push('Lot ' + x.lot + (l.salle ? ' → ' + l.salle + (l.round ? ', ' + l.round : '') : ' (non rattaché)'));
+  const parMere = {};
+  x.prises.forEach(b => { const m = mereDe(b.numero), k = m ? m.numero : b.numero;
+    (parMere[k] = parMere[k] || { m, num:k, nb:0, dates:new Set() }).nb += +b.nb || 0; parMere[k].dates.add(b.date); });
+  lignes.push('Mères : ' + Object.values(parMere).map(p => (p.m && p.m.surnom ? p.m.surnom + ' ' : '') + p.num + (p.m ? ' (' + p.m.cultivar + ')' : '') + ' ×' + p.nb).join(' ; '));
+  lignes.push('Boutures prélevées : ' + x.preleves + ' le ' + [...new Set(x.prises.map(b => b.date))].sort().join(', '));
+  ETAPES.forEach(e => { if (x.detruits[e]) lignes.push('Détruites (' + e + ') : ' + x.detruits[e]); });
+  if (l.date4po) lignes.push('Mise en 4 pouces : ' + l.date4po);
+  if (l.transfert) lignes.push('Transfert : ' + l.transfert + (l.transferes ? ' — ' + l.transferes + ' plants' : ''));
+  if (c) lignes.push('Round : début ' + c.debut + (c.floraison ? ', floraison ' + c.floraison : '') + (c.recolte ? ', récolte prévue ' + c.recolte : '') + (c.fin ? ', fin ' + c.fin : ''));
+  lignes.push('Restants : ' + x.restants);
+  return lignes.join('\n');
+}
+function trace(cle) {
+  const x = lots().find(y => y.cle === cle); if (!x) return;
+  const l = x.lien || {}, c = cycle(l.cycle);
+  const parMere = {};
+  x.prises.forEach(b => { const m = mereDe(b.numero), k = m ? m.numero : b.numero;
+    (parMere[k] = parMere[k] || { m, num:k, nb:0, dates:new Set() }).nb += +b.nb || 0; parMere[k].dates.add(b.date); });
+  const etape = (date, titre, detail, ok) => '<div><span>' + (date ? esc(fDate(date)) : '<span style="color:var(--mute)">date à préciser</span>') + '</span><b>' + titre + (detail ? '<br><small style="color:var(--mute);font-weight:400">' + detail + '</small>' : '') + '</b></div>';
+  const dp = ETAPES.map(e => x.detruits[e] ? e + ' : ' + x.detruits[e] : '').filter(Boolean).join(' · ');
+  ouvrir(tete('Traçabilité — lot ' + esc(x.lot)) +
+    '<h2>Plants mères</h2>' +
+    Object.values(parMere).map(p => p.m
+      ? '<div class="card tap" data-mere="' + esc(p.m.numero) + '"><div class="bar"></div><div class="body"><div class="ttl">' + (p.m.surnom ? '<span class="nick">' + esc(p.m.surnom) + '</span>' : '') + esc(p.m.cultivar) + '</div><div class="num">' + esc(p.m.numero) + '</div>' +
+        '<div class="meta">' + p.nb + ' boutures · ' + [...p.dates].sort().map(fDate).join(', ') + (p.m.creation ? ' · mère créée le ' + esc(fDate(p.m.creation)) : '') + (norm(p.num) !== norm(p.m.numero) ? '' : '') + '</div></div></div>'
+      : '<div class="card"><div class="bar" style="background:#b9b2a2"></div><div class="body"><div class="num">' + esc(p.num) + '</div><div class="meta">' + p.nb + ' boutures · mère non retrouvée dans l\'inventaire</div></div></div>').join('') +
+    '<h2>Parcours</h2><div class="kv">' +
+    etape(x.debut, 'Prise de boutures', x.preleves + ' boutures' + (x.fin !== x.debut ? ' (jusqu\'au ' + esc(fDate(x.fin)) + ')' : '')) +
+    etape(l.date4po, 'Mise en 4 pouces — salle 1', '') +
+    (dp ? '<div><span>Destructions</span><b>' + esc(dp) + '</b></div>' : '') +
+    etape(l.transfert, 'Transfert' + (l.salle ? ' → ' + esc(l.salle) : ''), l.transferes ? pl(+l.transferes) : 'restants avant transfert : ' + x.avantTransfert) +
+    (l.salle ? '<div><span>Destination</span><b>' + esc(l.salle) + (l.round ? ' · ' + esc(l.round) : '') +
+      (c ? '<br><small style="color:var(--mute);font-weight:400">début ' + esc(fDate(c.debut)) + (c.floraison ? ' · floraison ' + esc(fDate(c.floraison)) : '') + (c.recolte ? ' · récolte prévue ' + esc(fDate(c.recolte)) : '') + (c.fin ? ' · fin ' + esc(fDate(c.fin)) : '') + '</small>' : '') + '</b></div>'
+      : '<div><span>Destination</span><b><span class="tag warn">non rattaché</span></b></div>') +
+    '<div><span>Restants</span><b>' + pl(x.restants) + '</b></div></div>' +
+    '<div class="foot"><button class="btn" data-lier="' + esc(x.cle) + '">' + (x.lien ? 'Modifier le rattachement' : 'Rattacher à une salle') + '</button>' +
+    '<button class="btn" id="t-copie">Copier le résumé</button></div>');
+  $('t-copie').onclick = () => { const t = traceTexte(x);
+    (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => toast('Résumé copié'), () => { prompt('Résumé du lot', t); }); };
 }
 function addDays(s, n) { const d = toD(s); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
 
@@ -562,7 +702,8 @@ const datalistCult = () => '<datalist id="dl-cult">' + [...new Set(S.d.meres.map
 /* Fiche d'une mère */
 function fiche(num) {
   const m = mere(num); if (!m) return;
-  const bt = S.d.boutures.filter(b => norm(b.numero) === norm(m.numero)).sort((a, b) => b.date.localeCompare(a.date));
+  const bt = S.d.boutures.filter(b => { const x = mereDe(b.numero); return x && x.numero === m.numero; }).sort((a, b) => b.date.localeCompare(a.date));
+  const lesLots = lots().filter(x => x.prises.some(b => bt.includes(b)));
   const tot = bt.reduce((s, b) => s + (+b.nb || 0), 0);
   const ds = S.d.destructions.find(d => norm(d.numero) === norm(m.numero) && d.statut === 'valide');
   const enfants = S.d.meres.filter(x => norm(x.parent) === norm(m.numero));
@@ -583,6 +724,7 @@ function fiche(num) {
     (ds ? '<h2>Destruction</h2><div class="kv"><div><span>Date</span><b>' + fDate(ds.date) + '</b></div><div><span>Poids</span><b>' + esc(ds.poids) + ' g</b></div><div><span>Méthode</span><b>' + esc(ds.methode) + '</b></div><div><span>Raison</span><b>' + esc(ds.raison) + '</b></div><div><span>Témoins</span><b>' + esc(ds.temoin1) + ', ' + esc(ds.temoin2) + '</b></div><div><span>RSDC</span><b>' + (ds.rsdc === 'oui' ? 'complété' : 'à compléter') + '</b></div></div>' : '') +
     '<h2>Boutures <small>' + tot + ' sur 13 mois</small></h2>' +
     (bt.length ? '<div class="kv">' + bt.map(b => '<div><span>' + fDate(b.date) + ' · ' + esc(b.salle) + ' · lot ' + esc(b.lot) + '</span><b>×' + esc(b.nb) + '</b></div>').join('') + '</div>' : '<div class="empty">Aucune prise inscrite.</div>') +
+    (lesLots.length ? '<h2>Lots et salles de destination</h2>' + lesLots.map(x => '<div class="card tap" data-trace="' + esc(x.cle) + '"><div class="bar"></div><div class="body"><div class="ttl">Lot ' + esc(x.lot) + '</div>' + ligneLien(x) + '</div></div>').join('') : '') +
     (enfants.length ? '<h2>Mères issues de celle-ci</h2>' + enfants.map(carteMere).join('') : ''));
 }
 
@@ -658,7 +800,8 @@ function formPrise(pre) {
   ouvrir(tete('Prise de boutures') +
     '<div class="two"><div><label for="p-date">Date</label><input id="p-date" type="date" max="' + S.d.today + '" value="' + S.d.today + '"></div>' +
     '<div><label for="p-salle">Salle de destination</label><select id="p-salle"><option value="">—</option>' + S.d.salles.map(s => '<option>' + esc(s) + '</option>').join('') + '</select></div></div>' +
-    '<label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="ex. S4R16">' +
+    '<div class="two"><div><label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="ex. S4R16"></div>' +
+    '<div><label for="p-cycle">Round de destination</label><select id="p-cycle"><option value="">À préciser</option></select></div></div>' +
     '<label>Mères et nombre de boutures</label>' +
     '<div class="chips" id="p-cults">' + ['Tous'].concat(cults).map(c => '<button class="chip' + (c === c0 ? ' on' : '') + '" data-pc="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>' +
     '<div id="p-list">' + act.sort((a, b) => a.cultivar.localeCompare(b.cultivar, 'fr') || (a.surnom || '').localeCompare(b.surnom || '', 'fr', { numeric:true }))
@@ -671,6 +814,12 @@ function formPrise(pre) {
     document.querySelectorAll('#p-list .pick').forEach(p => p.classList.toggle('hidden', c !== 'Tous' && p.dataset.c !== c && !(+p.querySelector('input').value))); };
   filtre(c0);
   $('p-cults').onclick = e => { const b = e.target.closest('[data-pc]'); if (b) filtre(b.dataset.pc); };
+  const majCyclesPrise = () => { const cs = cyclesDe($('p-salle').value), n = /^S(\d+)R(\d+)$/.exec(normLot($('p-lot').value));
+    const avant = $('p-cycle').value, garde = cs.some(c => c.id === avant) ? avant : '';   // un round déjà choisi reste choisi
+    const sug = !garde && n && 'Salle ' + (+n[1]) === normSalle($('p-salle').value) ? cs.find(c => numRound(c.round) === +n[2]) : null;
+    const sel = garde || (sug ? sug.id : '');
+    $('p-cycle').innerHTML = '<option value="">À préciser</option>' + cs.map(c => '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.round || '?') + (c.debut ? ' — début ' + esc(fDate(c.debut)) : '') + '</option>').join(''); };
+  $('p-salle').addEventListener('change', majCyclesPrise); $('p-lot').addEventListener('change', majCyclesPrise);
   const lignes = () => [...document.querySelectorAll('[data-pn]')].map(i => ({ numero:i.dataset.pn, nb:+i.value || 0 })).filter(l => l.nb > 0);
   $('p-list').addEventListener('input', () => { const t = lignes().reduce((s, l) => s + l.nb, 0), n = lignes().length;
     $('p-tot').textContent = 'Total : ' + t + ' bouture' + (t > 1 ? 's' : '') + (n ? ' · ' + n + ' mère' + (n > 1 ? 's' : '') : ''); });
@@ -680,7 +829,9 @@ function formPrise(pre) {
     if (!L.length) throw new Error('Indiquez au moins une mère et un nombre de boutures.');
     L.forEach(l => { const m = mere(l.numero); if (l.nb !== Math.round(l.nb) || l.nb > 5000) throw new Error('Nombre de boutures invalide pour ' + nomMere(m) + '.');
       if (m.creation && m.creation > date) throw new Error('La mère ' + nomMere(m) + " n'existait pas encore à cette date."); });
-    enfiler('prendreBoutures', [{ date, salle:$('p-salle').value, lot:$('p-lot').value.trim(), notes:$('p-notes').value, lignes:L }]); fermer();
+    const cy = cycle($('p-cycle').value);
+    enfiler('prendreBoutures', [{ date, salle:$('p-salle').value, lot:$('p-lot').value.trim(), notes:$('p-notes').value, lignes:L,
+      round:cy ? cy.round : '', cycle:cy ? cy.id : '' }]); fermer();
     const t = L.reduce((s, l) => s + l.nb, 0); toast(t + ' bouture' + (t > 1 ? 's' : '') + ' enregistrée' + (t > 1 ? 's' : ''));
   });
 }
@@ -803,7 +954,7 @@ function formRenommer(ancien) {
   });
 }
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb],[data-dlot],[data-andp]');
+  const t = e.target.closest('[data-filtre],[data-mere],[data-prise],[data-detr],[data-modif],[data-rsdc],[data-annd],[data-supb],[data-dlot],[data-andp],[data-trace],[data-lier]');
   if (!t) return;
   const d = t.dataset;
   if (d.filtre) { S.filtre = d.filtre; renderMeres(); }
@@ -811,6 +962,8 @@ document.addEventListener('click', e => {
   else if (d.prise) formPrise(d.prise);
   else if (d.detr !== undefined) formDetr(d.detr);
   else if (d.dlot !== undefined) formDetrPlants(d.dlot);
+  else if (d.trace) trace(d.trace);
+  else if (d.lier) formLot(d.lier);
   else if (d.andp) formMotif('Annuler la destruction de plants', 'Annuler la destruction', m => { enfiler('annulerDestructionPlants', [d.andp, m]); toast('Destruction annulée'); });
   else if (d.modif) formModif(d.modif);
   else if (d.rsdc) { if (confirm('Confirmer que cette destruction est inscrite au RSDC ?')) { enfiler('marquerRsdc', [d.rsdc]); toast('RSDC complété'); } }
