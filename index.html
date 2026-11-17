@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Propagation</title>
-<meta name="theme-color" content="#f3f4f8">
+<meta name="theme-color" content="#f3f4f6">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Propagation">
@@ -13,22 +13,22 @@
 <link rel="icon" type="image/png" href="icone-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>
-  /* Thème « Brume » : clair, dégradé violet → turquoise */
+  /* Thème « Ardoise » : clair, gris-bleu sobre avec accents verts */
   :root {
-    --bg:#f3f4f8; --card:#fff; --ink:#14162b; --mute:#6b7089; --line:#e3e5ee;
-    --acc:#5b4cf0; --acc2:#ecebfe; --leaf:#0f9f8f; --leaf2:#ddf5f1; --warn:#e5484d; --warn2:#fdecee;
-    --grad:linear-gradient(135deg,#5b4cf0,#0fb5a0); --sur-acc:#fff; --off:#eceef4; --eteint:#c3c6d4;
-    --barre:rgba(255,255,255,.88); --ombre:0 1px 3px rgba(20,22,43,.06); --ombre-fab:0 8px 22px rgba(91,76,240,.35);
+    --bg:#f3f4f6; --card:#fff; --ink:#151b24; --mute:#687280; --line:#e2e5ea;
+    --acc:#2b3a4f; --acc2:#e7ebf1; --leaf:#1f8a70; --leaf2:#e0f2ec; --warn:#d64545; --warn2:#fbeaea;
+    --grad:linear-gradient(135deg,#2b3a4f,#24303f); --sur-acc:#fff; --off:#eceef2; --eteint:#c4c9d1;
+    --barre:rgba(255,255,255,.9); --ombre:0 1px 3px rgba(21,27,36,.06); --ombre-fab:0 6px 18px rgba(43,58,79,.3);
   }
   /* Mode nuit : automatique le soir (19 h – 7 h), ou forcé par le bouton de l'en-tête — comme le calendrier */
   html.nuit {
-    --bg:#0f1020; --card:#191a2e; --ink:#e8e9f5; --mute:#9a9db8; --line:#2a2c45;
-    --acc:#8b7ff7; --acc2:rgba(139,127,247,.16); --leaf:#2dd4bf; --leaf2:rgba(45,212,191,.14); --warn:#ff7b80; --warn2:rgba(255,123,128,.15);
-    --grad:linear-gradient(135deg,#7c6ff5,#14b8a6); --off:#24263d; --eteint:#3c3f5c;
-    --barre:rgba(15,16,32,.92); --ombre:none; --ombre-fab:0 8px 24px rgba(124,111,245,.35);
+    --bg:#101318; --card:#181c23; --ink:#e6e9ee; --mute:#9aa3b0; --line:#272d37;
+    --acc:#5f7696; --acc2:rgba(120,145,180,.16); --leaf:#3fbf98; --leaf2:rgba(63,191,152,.14); --warn:#ff7b7b; --warn2:rgba(255,123,123,.15);
+    --grad:linear-gradient(135deg,#4a5d78,#3a4a60); --off:#222833; --eteint:#3a414d;
+    --barre:rgba(16,19,24,.92); --ombre:none; --ombre-fab:0 6px 20px rgba(0,0,0,.45);
     color-scheme:dark;
   }
-  html.nuit #toast { background:#e8e9f5; color:#0f1020; }
+  html.nuit #toast { background:#e6e9ee; color:#101318; }
   html.nuit .card, html.nuit .stat, html.nuit .grp, html.nuit .kv, html.nuit .login-box, html.nuit .pick, html.nuit .jr { border:1px solid var(--line); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -66,7 +66,7 @@
   .card { background:var(--card); border-radius:16px; display:flex; overflow:hidden; margin-bottom:8px; box-shadow:var(--ombre); }
   .card.tap { cursor:pointer; }
   .card .bar { width:5px; flex:0 0 5px; background:var(--leaf); }
-  .card .bar { background:var(--grad); }
+  .card .bar { background:var(--leaf); }
   .card.det .bar { background:var(--eteint); }
   .card .body { padding:10px 12px; flex:1; min-width:0; }
   .ttl { font-weight:700; font-size:16px; line-height:1.3; }
@@ -1006,7 +1006,7 @@ function appliquerTheme() {
   const choix = load('prop_theme') || 'auto', h = new Date().getHours();
   const nuit = choix === 'nuit' || (choix === 'auto' && (h >= NUIT_DEBUT || h < NUIT_FIN));
   document.documentElement.classList.toggle('nuit', nuit);
-  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', nuit ? '#0f1020' : '#f3f4f8');
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', nuit ? '#101318' : '#f3f4f6');
   const b = $('theme'); if (b) { b.textContent = THEMES[choix][0]; b.title = THEMES[choix][1]; }
 }
 $('theme').onclick = () => {
