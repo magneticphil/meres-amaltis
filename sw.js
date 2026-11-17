@@ -1,8 +1,8 @@
 /* Plantes mères — Amaltis : l'écran s'ouvre même sans réseau.
    Réseau d'abord (toujours la dernière version publiée) ; après 4 s ou en cas de coupure, la copie gardée sur le téléphone.
    Les données ne passent jamais par ici : elles viennent du script Google à chaque ouverture. */
-const CACHE = 'meres-v10';
-const FICHIERS = ['./', './index.html', './manifest.webmanifest', './ardoise-180.png', './ardoise-192.png', './ardoise-512.png'];
+const CACHE = 'meres-v11';
+const FICHIERS = ['./', './index.html', './manifest.webmanifest', './roi-180.png', './roi-192.png', './roi-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FICHIERS)).then(() => self.skipWaiting()));
