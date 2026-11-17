@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Propagation</title>
-<meta name="theme-color" content="#b8860b">
+<meta name="theme-color" content="#f3f4f8">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Propagation">
@@ -13,10 +13,23 @@
 <link rel="icon" type="image/png" href="icone-192.png">
 <link rel="manifest" href="manifest.webmanifest">
 <style>
+  /* Thème « Brume » : clair, dégradé violet → turquoise */
   :root {
-    --bg:#f6f4ee; --card:#fff; --ink:#1f1d17; --mute:#6f6a5d; --line:#e5e0d3;
-    --acc:#8a6414; --acc2:#f6ecd2; --leaf:#2c6a48; --leaf2:#e4f1e8; --warn:#b42318; --warn2:#fdecea;
+    --bg:#f3f4f8; --card:#fff; --ink:#14162b; --mute:#6b7089; --line:#e3e5ee;
+    --acc:#5b4cf0; --acc2:#ecebfe; --leaf:#0f9f8f; --leaf2:#ddf5f1; --warn:#e5484d; --warn2:#fdecee;
+    --grad:linear-gradient(135deg,#5b4cf0,#0fb5a0); --sur-acc:#fff; --off:#eceef4; --eteint:#c3c6d4;
+    --barre:rgba(255,255,255,.88); --ombre:0 1px 3px rgba(20,22,43,.06); --ombre-fab:0 8px 22px rgba(91,76,240,.35);
   }
+  /* Mode nuit : automatique le soir (19 h – 7 h), ou forcé par le bouton de l'en-tête — comme le calendrier */
+  html.nuit {
+    --bg:#0f1020; --card:#191a2e; --ink:#e8e9f5; --mute:#9a9db8; --line:#2a2c45;
+    --acc:#8b7ff7; --acc2:rgba(139,127,247,.16); --leaf:#2dd4bf; --leaf2:rgba(45,212,191,.14); --warn:#ff7b80; --warn2:rgba(255,123,128,.15);
+    --grad:linear-gradient(135deg,#7c6ff5,#14b8a6); --off:#24263d; --eteint:#3c3f5c;
+    --barre:rgba(15,16,32,.92); --ombre:none; --ombre-fab:0 8px 24px rgba(124,111,245,.35);
+    color-scheme:dark;
+  }
+  html.nuit #toast { background:#e8e9f5; color:#0f1020; }
+  html.nuit .card, html.nuit .stat, html.nuit .grp, html.nuit .kv, html.nuit .login-box, html.nuit .pick, html.nuit .jr { border:1px solid var(--line); }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   .hidden { display:none !important; }
@@ -25,7 +38,7 @@
   button:disabled { opacity:.5; cursor:default; }
 
   #login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
-  .login-box { background:var(--card); border-radius:16px; padding:24px; width:100%; max-width:360px; box-shadow:0 2px 12px rgba(0,0,0,.06); }
+  .login-box { background:var(--card); border-radius:18px; padding:24px; width:100%; max-width:360px; box-shadow:var(--ombre); }
   .login-box img { width:56px; height:56px; border-radius:13px; display:block; margin-bottom:12px; }
   .login-box h1 { font-size:20px; margin:0 0 4px; }
   .login-box p { margin:0 0 18px; color:var(--mute); }
@@ -38,7 +51,7 @@
   .chips { display:flex; gap:6px; overflow-x:auto; padding:8px 0 4px; scrollbar-width:none; }
   .chips::-webkit-scrollbar { display:none; }
   .chip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); border-radius:999px; padding:5px 12px; font-size:14px; }
-  .chip.on { background:var(--acc); border-color:var(--acc); color:#fff; }
+  .chip.on { background:var(--grad); border-color:transparent; color:var(--sur-acc); }
   .chip small { opacity:.75; margin-left:3px; }
   .search { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--card); font-size:16px; margin-top:6px; }
 
@@ -46,14 +59,15 @@
   h2 { font-size:16px; margin:18px 0 8px; }
   h2 small { color:var(--mute); font-weight:400; }
   .stats { display:flex; gap:8px; margin:8px 0 4px; }
-  .stat { flex:1; background:var(--card); border-radius:12px; padding:10px 12px; }
+  .stat { flex:1; background:var(--card); border-radius:16px; box-shadow:var(--ombre); padding:10px 12px; }
   .stat b { display:block; font-size:22px; }
   .stat span { font-size:12px; color:var(--mute); }
 
-  .card { background:var(--card); border-radius:12px; display:flex; overflow:hidden; margin-bottom:8px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card { background:var(--card); border-radius:16px; display:flex; overflow:hidden; margin-bottom:8px; box-shadow:var(--ombre); }
   .card.tap { cursor:pointer; }
   .card .bar { width:5px; flex:0 0 5px; background:var(--leaf); }
-  .card.det .bar { background:#b9b2a2; }
+  .card .bar { background:var(--grad); }
+  .card.det .bar { background:var(--eteint); }
   .card .body { padding:10px 12px; flex:1; min-width:0; }
   .ttl { font-weight:700; font-size:16px; line-height:1.3; }
   .ttl .nick { display:inline-block; background:var(--acc2); color:var(--acc); border-radius:6px; padding:0 6px; margin-right:6px; font-size:14px; }
@@ -61,19 +75,19 @@
   .meta { font-size:12px; color:var(--mute); margin-top:3px; }
   .tag { display:inline-block; font-size:12px; font-weight:600; border-radius:999px; padding:1px 8px; }
   .tag.ok { background:var(--leaf2); color:var(--leaf); }
-  .tag.off { background:#eee9de; color:var(--mute); }
+  .tag.off { background:var(--off); color:var(--mute); }
   .tag.warn { background:var(--warn2); color:var(--warn); }
   .tag.gold { background:var(--acc2); color:var(--acc); }
   .card.det .ttl, .card.annul .ttl { color:var(--mute); }
   .card.annul { opacity:.6; }
   .acts { display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
   .btn { border:1px solid var(--line); background:var(--card); border-radius:8px; padding:6px 10px; font-size:14px; }
-  .btn.pri { background:var(--acc); border-color:var(--acc); color:#fff; }
+  .btn.pri { background:var(--grad); border-color:transparent; color:var(--sur-acc); }
   .btn.ok { background:var(--leaf2); border-color:var(--leaf2); color:var(--leaf); font-weight:600; }
   .btn.dan { color:var(--warn); }
   .btn.full { width:100%; padding:12px; font-size:16px; }
   .empty { color:var(--mute); padding:8px 0 4px; font-size:14px; }
-  .grp { background:var(--card); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .grp { background:var(--card); border-radius:16px; box-shadow:var(--ombre); padding:10px 12px; margin-bottom:8px; }
   .grp-h { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
   .grp-h b { font-size:15px; }
   .grp-l { font-size:13px; margin-top:6px; border-top:1px solid var(--line); padding-top:6px; }
@@ -81,10 +95,10 @@
   .jr { background:var(--card); border-radius:10px; padding:8px 12px; margin-bottom:6px; font-size:13px; }
   .jr b { font-size:14px; }
 
-  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:6; display:flex; background:rgba(255,255,255,.96); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
+  .tabs { position:fixed; left:0; right:0; bottom:0; z-index:6; display:flex; background:var(--barre); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
   .tabs button { flex:1; border:0; background:transparent; padding:10px 0 12px; font-size:13px; color:var(--mute); }
   .tabs button.on { color:var(--acc); font-weight:600; }
-  .fab { position:fixed; right:18px; bottom:calc(env(safe-area-inset-bottom) + 66px); z-index:7; width:56px; height:56px; border-radius:50%; border:0; background:var(--acc); color:#fff; font-size:30px; line-height:56px; box-shadow:0 4px 12px rgba(0,0,0,.2); }
+  .fab { position:fixed; right:18px; bottom:calc(env(safe-area-inset-bottom) + 66px); z-index:7; width:56px; height:56px; border-radius:50%; border:0; background:var(--grad); color:var(--sur-acc); font-size:30px; line-height:56px; box-shadow:var(--ombre-fab); }
 
   .overlay { position:fixed; inset:0; z-index:10; background:rgba(0,0,0,.35); display:flex; align-items:flex-end; justify-content:center; }
   .panel { background:var(--bg); width:100%; max-width:560px; max-height:92vh; overflow-y:auto; border-radius:16px 16px 0 0; padding:16px 16px calc(env(safe-area-inset-bottom) + 16px); }
@@ -100,7 +114,7 @@
   .pills label { margin:0; }
   .pills input { display:none; }
   .pills span { display:inline-block; border:1px solid var(--line); background:var(--card); border-radius:999px; padding:6px 12px; font-size:14px; color:var(--ink); }
-  .pills input:checked + span { background:var(--acc); border-color:var(--acc); color:#fff; }
+  .pills input:checked + span { background:var(--grad); border-color:transparent; color:var(--sur-acc); }
   .check { display:flex; align-items:center; gap:8px; color:var(--ink); font-size:15px; }
   .check input { width:20px; height:20px; flex:0 0 20px; }
   .two { display:flex; gap:8px; } .two > div { flex:1; min-width:0; }
@@ -145,6 +159,7 @@
     <div class="top">
       <h1 id="titre">Plantes mères</h1>
       <span class="who" id="who"></span>
+      <button class="icon-btn" id="theme" title="Mode nuit : automatique" aria-label="Mode nuit">🌓</button>
       <button class="icon-btn" id="refresh" title="Actualiser" aria-label="Actualiser">↻</button>
       <button class="icon-btn" id="logout" title="Déconnexion" aria-label="Déconnexion">⎋</button>
     </div>
@@ -634,7 +649,7 @@ function trace(cle) {
     Object.values(parMere).map(p => p.m
       ? '<div class="card tap" data-mere="' + esc(p.m.numero) + '"><div class="bar"></div><div class="body"><div class="ttl">' + (p.m.surnom ? '<span class="nick">' + esc(p.m.surnom) + '</span>' : '') + esc(p.m.cultivar) + '</div><div class="num">' + esc(p.m.numero) + '</div>' +
         '<div class="meta">' + p.nb + ' boutures · ' + [...p.dates].sort().map(fDate).join(', ') + (p.m.creation ? ' · mère créée le ' + esc(fDate(p.m.creation)) : '') + (norm(p.num) !== norm(p.m.numero) ? '' : '') + '</div></div></div>'
-      : '<div class="card"><div class="bar" style="background:#b9b2a2"></div><div class="body"><div class="num">' + esc(p.num) + '</div><div class="meta">' + p.nb + ' boutures · mère non retrouvée dans l\'inventaire</div></div></div>').join('') +
+      : '<div class="card"><div class="bar" style="background:var(--eteint)"></div><div class="body"><div class="num">' + esc(p.num) + '</div><div class="meta">' + p.nb + ' boutures · mère non retrouvée dans l\'inventaire</div></div></div>').join('') +
     '<h2>Parcours</h2><div class="kv">' +
     etape(x.debut, 'Prise de boutures', x.preleves + ' boutures' + (x.fin !== x.debut ? ' (jusqu\'au ' + esc(fDate(x.fin)) + ')' : '')) +
     etape(l.date4po, 'Mise en 4 pouces — salle 1', '') +
@@ -984,6 +999,23 @@ document.addEventListener('click', e => {
   else if (d.supb) formMotif('Supprimer la ligne de boutures', 'Supprimer', m => { enfiler('supprimerBouture', [d.supb, m]); toast('Ligne supprimée'); });
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && S.d) { scheduleFlush(0); refresh(true); } });
+/* ---------- Mode nuit (même fonctionnement que le calendrier) ---------- */
+const NUIT_DEBUT = 19, NUIT_FIN = 7;  // heures locales du téléphone : sombre de 19 h à 7 h
+const THEMES = { auto: ['🌓', 'Mode nuit : automatique (19 h – 7 h)'], nuit: ['🌙', 'Mode nuit : toujours'], jour: ['☀️', 'Mode nuit : jamais'] };
+function appliquerTheme() {
+  const choix = load('prop_theme') || 'auto', h = new Date().getHours();
+  const nuit = choix === 'nuit' || (choix === 'auto' && (h >= NUIT_DEBUT || h < NUIT_FIN));
+  document.documentElement.classList.toggle('nuit', nuit);
+  const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute('content', nuit ? '#0f1020' : '#f3f4f8');
+  const b = $('theme'); if (b) { b.textContent = THEMES[choix][0]; b.title = THEMES[choix][1]; }
+}
+$('theme').onclick = () => {
+  const ordre = ['auto', 'nuit', 'jour'], choix = load('prop_theme') || 'auto', suivant = ordre[(ordre.indexOf(choix) + 1) % 3];
+  store('prop_theme', suivant); appliquerTheme(); toast(THEMES[suivant][1]);
+};
+appliquerTheme();
+setInterval(appliquerTheme, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) appliquerTheme(); });
 initLogin();
 </script>
 </body>
