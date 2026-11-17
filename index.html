@@ -96,9 +96,11 @@
   .jr b { font-size:14px; }
 
   .tabs { position:fixed; left:0; right:0; bottom:0; z-index:6; display:flex; background:var(--barre); -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom); }
-  .tabs button { flex:1; border:0; background:transparent; padding:10px 0 12px; font-size:13px; color:var(--mute); }
+  .tabs button { flex:1; border:0; background:transparent; padding:7px 0 9px; font-size:11px; color:var(--mute); display:flex; flex-direction:column; align-items:center; gap:3px; }
+  .tabs button svg { width:24px; height:24px; padding:3px 14px; box-sizing:content-box; border-radius:14px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; transition:background .15s; }
   .tabs button.on { color:var(--acc); font-weight:600; }
-  .fab { position:fixed; right:18px; bottom:calc(env(safe-area-inset-bottom) + 66px); z-index:7; width:56px; height:56px; border-radius:50%; border:0; background:var(--grad); color:var(--sur-acc); font-size:30px; line-height:56px; box-shadow:var(--ombre-fab); }
+  .tabs button.on svg { background:var(--acc2); }
+  .fab { position:fixed; right:18px; bottom:calc(env(safe-area-inset-bottom) + 80px); z-index:7; width:56px; height:56px; border-radius:50%; border:0; background:var(--grad); color:var(--sur-acc); font-size:30px; line-height:56px; box-shadow:var(--ombre-fab); }
 
   .overlay { position:fixed; inset:0; z-index:10; background:rgba(0,0,0,.35); display:flex; align-items:flex-end; justify-content:center; }
   .panel { background:var(--bg); width:100%; max-width:560px; max-height:92vh; overflow-y:auto; border-radius:16px 16px 0 0; padding:16px 16px calc(env(safe-area-inset-bottom) + 16px); }
@@ -175,10 +177,10 @@
   </main>
   <button class="fab" id="fab" aria-label="Ajouter">+</button>
   <nav class="tabs">
-    <button data-v="meres" class="on">Mères</button>
-    <button data-v="boutures">Boutures</button>
-    <button data-v="destr">Destructions</button>
-    <button data-v="journal" id="tab-journal" class="hidden">Journal</button>
+    <button data-v="meres" class="on"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 16h10l-1.2 5H8.2z"/><path d="M12 16V8"/><path d="M12 11c-3 0-5-2-5-5 3 0 5 2 5 5z"/><path d="M12 9c0-3 2-5 5-5 0 3-2 5-5 5z"/></svg><span>Mères</span></button>
+    <button data-v="boutures"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20v-6"/><path d="M12 14c-3 0-5-2-5-5 3 0 5 2 5 5z"/><path d="M12 14c3 0 5-2 5-5-3 0-5 2-5 5z"/><path d="M5 20h14"/></svg><span>Boutures</span></button>
+    <button data-v="destr"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg><span>Destructions</span></button>
+    <button data-v="journal" id="tab-journal" class="hidden"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg><span>Journal</span></button>
   </nav>
 </div>
 
