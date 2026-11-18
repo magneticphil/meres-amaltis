@@ -53,6 +53,9 @@
   .chip { flex:0 0 auto; border:1px solid var(--line); background:var(--card); border-radius:999px; padding:5px 12px; font-size:14px; }
   .chip.on { background:var(--grad); border-color:transparent; color:var(--sur-acc); }
   .chip small { opacity:.75; margin-left:3px; }
+  .chips.wrap { flex-wrap:wrap; overflow:visible; }
+  .muted { color:var(--mute); font-size:14px; padding:6px 0; }
+  .chip.big { padding:9px 16px; font-size:15px; }
   .search { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--card); font-size:16px; margin-top:6px; }
 
   main { padding:4px 16px calc(env(safe-area-inset-bottom) + 96px); max-width:720px; margin:0 auto; }
@@ -827,10 +830,11 @@ function formPrise(pre) {
   const cults = [...new Set(act.map(m => m.cultivar))].sort((a, b) => a.localeCompare(b, 'fr'));
   const c0 = pre ? mere(pre).cultivar : (cults.length === 1 ? cults[0] : 'Tous');
   ouvrir(tete('Prise de boutures') +
-    '<div class="two"><div><label for="p-date">Date</label><input id="p-date" type="date" max="' + S.d.today + '" value="' + S.d.today + '"></div>' +
-    '<div><label for="p-salle">Salle de destination</label><select id="p-salle"><option value="">—</option>' + S.d.salles.map(s => '<option>' + esc(s) + '</option>').join('') + '</select></div></div>' +
-    '<div class="two"><div><label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="ex. S4R16"></div>' +
-    '<div><label for="p-cycle">Round de destination</label><select id="p-cycle"><option value="">À préciser</option></select></div></div>' +
+    '<label for="p-date">Date</label><input id="p-date" type="date" max="' + S.d.today + '" value="' + S.d.today + '">' +
+    '<label>Salle de destination</label><input type="hidden" id="p-salle"><div class="chips wrap" id="p-salles">' +
+      S.d.salles.filter(x => !/^Salle [12]$/.test(normSalle(x))).map(x => '<button type="button" class="chip big" data-ps="' + esc(x) + '">' + esc(x) + '</button>').join('') + '</div>' +
+    '<label>Round de destination</label><input type="hidden" id="p-cycle"><div class="chips wrap" id="p-rounds"><span class="muted">Choisissez d\'abord la salle.</span></div>' +
+    '<label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="rempli automatiquement, ex. S4R16">' +
     '<label>Mères et nombre de boutures</label>' +
     '<div class="chips" id="p-cults">' + ['Tous'].concat(cults).map(c => '<button class="chip' + (c === c0 ? ' on' : '') + '" data-pc="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>' +
     '<div id="p-list">' + act.sort((a, b) => a.cultivar.localeCompare(b.cultivar, 'fr') || (a.surnom || '').localeCompare(b.surnom || '', 'fr', { numeric:true }))
@@ -843,12 +847,29 @@ function formPrise(pre) {
     document.querySelectorAll('#p-list .pick').forEach(p => p.classList.toggle('hidden', c !== 'Tous' && p.dataset.c !== c && !(+p.querySelector('input').value))); };
   filtre(c0);
   $('p-cults').onclick = e => { const b = e.target.closest('[data-pc]'); if (b) filtre(b.dataset.pc); };
-  const majCyclesPrise = () => { const cs = cyclesDe($('p-salle').value), n = /^S(\d+)R(\d+)$/.exec(normLot($('p-lot').value));
-    const avant = $('p-cycle').value, garde = cs.some(c => c.id === avant) ? avant : '';   // un round déjà choisi reste choisi
-    const sug = !garde && n && 'Salle ' + (+n[1]) === normSalle($('p-salle').value) ? cs.find(c => numRound(c.round) === +n[2]) : null;
-    const sel = garde || (sug ? sug.id : '');
-    $('p-cycle').innerHTML = '<option value="">À préciser</option>' + cs.map(c => '<option value="' + esc(c.id) + '"' + (c.id === sel ? ' selected' : '') + '>' + esc(c.round || '?') + (c.debut ? ' — début ' + esc(fDate(c.debut)) : '') + '</option>').join(''); };
-  $('p-salle').addEventListener('change', majCyclesPrise); $('p-lot').addEventListener('change', majCyclesPrise);
+  let lotAuto = true, rFutur = 0;   // le no de lot suit la salle et le round tant qu'on ne l'a pas tapé soi-même
+  const majLot = () => { if (!lotAuto) return; const sn = /(\d+)$/.exec(normSalle($('p-salle').value)), cy = cycle($('p-cycle').value), r = cy ? numRound(cy.round) : rFutur;
+    $('p-lot').value = sn && r ? 'S' + sn[1] + 'R' + r : ''; };
+  const majRounds = () => { const cs = cyclesDe($('p-salle').value), avant = $('p-cycle').value;
+    if (!cs.some(c => c.id === avant)) $('p-cycle').value = '';
+    const sel = $('p-cycle').value, recents = cs.slice(0, 3).reverse(), proch = cs.reduce((m, c) => Math.max(m, numRound(c.round) || 0), 0) + 1;
+    if (sel) rFutur = 0;
+    $('p-rounds').innerHTML = !$('p-salle').value ? '<span class="muted">Choisissez d\'abord la salle.</span>' :
+      recents.map(c => '<button type="button" class="chip big' + (c.id === sel ? ' on' : '') + '" data-pr="' + esc(c.id) + '">' + esc(c.round || '?') + (c.debut ? ' <small>' + esc(fDate(c.debut)) + '</small>' : '') + '</button>').join('') +
+      '<button type="button" class="chip big' + (!sel && rFutur === proch ? ' on' : '') + '" data-pr="" data-rn="' + proch + '">Round ' + proch + ' <small>à venir</small></button>' +
+      '<button type="button" class="chip big' + (!sel && !rFutur ? ' on' : '') + '" data-pr="" data-rn="0">À préciser</button>'; majLot(); };
+  $('p-salles').onclick = e => { const b = e.target.closest('[data-ps]'); if (!b) return; $('p-salle').value = b.dataset.ps; rFutur = 0;
+    document.querySelectorAll('#p-salles .chip').forEach(x => x.classList.toggle('on', x === b)); majRounds(); };
+  $('p-rounds').onclick = e => { const b = e.target.closest('[data-pr]'); if (!b) return; $('p-cycle').value = b.dataset.pr; rFutur = +(b.dataset.rn || 0);
+    document.querySelectorAll('#p-rounds .chip').forEach(x => x.classList.toggle('on', x === b)); majLot(); };
+  $('p-lot').addEventListener('input', () => { lotAuto = !$('p-lot').value.trim(); });
+  $('p-lot').addEventListener('change', () => {   // un lot tapé « S6R4 » choisit la salle 6 et son round 4
+    const n = /^S(\d+)R(\d+)$/.exec(normLot($('p-lot').value)); if (!n) return;
+    const b = [...document.querySelectorAll('#p-salles [data-ps]')].find(x => normSalle(x.dataset.ps) === 'Salle ' + (+n[1])); if (!b) return;
+    const c = cyclesDe(b.dataset.ps).find(x => numRound(x.round) === +n[2]);
+    if ($('p-salle').value === b.dataset.ps && ((c && $('p-cycle').value === c.id) || (!c && rFutur === +n[2]))) return;   // déjà en place : on ne redessine pas sous le doigt
+    $('p-salle').value = b.dataset.ps; document.querySelectorAll('#p-salles .chip').forEach(x => x.classList.toggle('on', x === b));
+    $('p-cycle').value = c ? c.id : ''; rFutur = c ? 0 : +n[2]; majRounds(); });
   const lignes = () => [...document.querySelectorAll('[data-pn]')].map(i => ({ numero:i.dataset.pn, nb:+i.value || 0 })).filter(l => l.nb > 0);
   $('p-list').addEventListener('input', () => { const t = lignes().reduce((s, l) => s + l.nb, 0), n = lignes().length;
     $('p-tot').textContent = 'Total : ' + t + ' bouture' + (t > 1 ? 's' : '') + (n ? ' · ' + n + ' mère' + (n > 1 ? 's' : '') : ''); });
