@@ -834,6 +834,8 @@ function formPrise(pre) {
     '<label>Salle de destination</label><input type="hidden" id="p-salle"><div class="chips wrap" id="p-salles">' +
       S.d.salles.filter(x => !/^Salle [12]$/.test(normSalle(x))).map(x => '<button type="button" class="chip big" data-ps="' + esc(x) + '">' + esc(x) + '</button>').join('') + '</div>' +
     '<label>Round de destination</label><input type="hidden" id="p-cycle"><div class="chips wrap" id="p-rounds"><span class="muted">Choisissez d\'abord la salle.</span></div>' +
+    '<label for="p-round">Numéro du round</label><input id="p-round" type="number" inputmode="numeric" min="1" step="1" placeholder="ex. 15" disabled>' +
+    '<div class="hint">Choisissez un bouton ou saisissez un autre numéro, même si le round n\'est pas encore au calendrier.</div>' +
     '<label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="rempli automatiquement, ex. S4R16">' +
     '<label>Mères et nombre de boutures</label>' +
     '<div class="chips" id="p-cults">' + ['Tous'].concat(cults).map(c => '<button class="chip' + (c === c0 ? ' on' : '') + '" data-pc="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>' +
@@ -852,19 +854,29 @@ function formPrise(pre) {
     $('p-lot').value = sn && r ? 'S' + sn[1] + 'R' + r : ''; };
   const majRounds = () => { const cs = cyclesDe($('p-salle').value), avant = $('p-cycle').value;
     if (!cs.some(c => c.id === avant)) $('p-cycle').value = '';
-    const sel = $('p-cycle').value, recents = cs.slice(0, 3).reverse(), proch = cs.reduce((m, c) => Math.max(m, numRound(c.round) || 0), 0) + 1;
+    const sel = $('p-cycle').value, recents = cs.filter((c, i) => i < 3 || c.id === sel).reverse(), proch = cs.reduce((m, c) => Math.max(m, numRound(c.round) || 0), 0) + 1;
     if (sel) rFutur = 0;
+    $('p-round').disabled = !$('p-salle').value;
+    $('p-round').value = (sel ? numRound(cycle(sel).round) : rFutur) || '';
     $('p-rounds').innerHTML = !$('p-salle').value ? '<span class="muted">Choisissez d\'abord la salle.</span>' :
       recents.map(c => '<button type="button" class="chip big' + (c.id === sel ? ' on' : '') + '" data-pr="' + esc(c.id) + '">' + esc(c.round || '?') + (c.debut ? ' <small>' + esc(fDate(c.debut)) + '</small>' : '') + '</button>').join('') +
       '<button type="button" class="chip big' + (!sel && rFutur === proch ? ' on' : '') + '" data-pr="" data-rn="' + proch + '">Round ' + proch + ' <small>à venir</small></button>' +
+      (!sel && rFutur && rFutur !== proch ? '<button type="button" class="chip big on" data-pr="" data-rn="' + rFutur + '">Round ' + rFutur + ' <small>hors calendrier</small></button>' : '') +
       '<button type="button" class="chip big' + (!sel && !rFutur ? ' on' : '') + '" data-pr="" data-rn="0">À préciser</button>'; majLot(); };
-  $('p-salles').onclick = e => { const b = e.target.closest('[data-ps]'); if (!b) return; $('p-salle').value = b.dataset.ps; rFutur = 0;
+  $('p-salles').onclick = e => { const b = e.target.closest('[data-ps]'); if (!b) return; $('p-salle').value = b.dataset.ps; $('p-cycle').value = ''; rFutur = 0; lotAuto = true;
     document.querySelectorAll('#p-salles .chip').forEach(x => x.classList.toggle('on', x === b)); majRounds(); };
-  $('p-rounds').onclick = e => { const b = e.target.closest('[data-pr]'); if (!b) return; $('p-cycle').value = b.dataset.pr; rFutur = +(b.dataset.rn || 0);
-    document.querySelectorAll('#p-rounds .chip').forEach(x => x.classList.toggle('on', x === b)); majLot(); };
-  $('p-lot').addEventListener('input', () => { lotAuto = !$('p-lot').value.trim(); });
-  $('p-lot').addEventListener('change', () => {   // un lot tapé « S6R4 » choisit la salle 6 et son round 4
+  $('p-rounds').onclick = e => { const b = e.target.closest('[data-pr]'); if (!b) return; $('p-cycle').value = b.dataset.pr; rFutur = +(b.dataset.rn || 0); lotAuto = true;
+    majRounds(); };
+  $('p-round').addEventListener('input', () => {
+    const r = Number($('p-round').value), c = cyclesDe($('p-salle').value).find(x => numRound(x.round) === r);
+    $('p-cycle').value = c ? c.id : ''; rFutur = Number.isSafeInteger(r) && r > 0 ? r : 0; lotAuto = true;
+    // Garder le champ intact pendant la frappe pour permettre de corriger un numéro invalide.
+    const saisie = $('p-round').value; majRounds(); $('p-round').value = saisie;
+  });
+  $('p-lot').addEventListener('input', () => {   // un lot tapé « S6R4 » choisit la salle 6 et son round 4
+    lotAuto = !$('p-lot').value.trim();
     const n = /^S(\d+)R(\d+)$/.exec(normLot($('p-lot').value)); if (!n) return;
+    if (!Number.isSafeInteger(+n[2]) || +n[2] < 1) return;
     const b = [...document.querySelectorAll('#p-salles [data-ps]')].find(x => normSalle(x.dataset.ps) === 'Salle ' + (+n[1])); if (!b) return;
     const c = cyclesDe(b.dataset.ps).find(x => numRound(x.round) === +n[2]);
     if ($('p-salle').value === b.dataset.ps && ((c && $('p-cycle').value === c.id) || (!c && rFutur === +n[2]))) return;   // déjà en place : on ne redessine pas sous le doigt
@@ -876,12 +888,14 @@ function formPrise(pre) {
   $('p-ok').onclick = () => soumettre('p-ok', async () => {
     const date = $('p-date').value, L = lignes();
     pasFutur(date); nonVide($('p-salle').value, 'Choisissez la salle de destination.'); nonVide($('p-lot').value, 'Le numéro de lot est obligatoire.');
+    if ($('p-round').value && (!Number.isSafeInteger(+$('p-round').value) || +$('p-round').value < 1)) throw new Error('Le round doit être un nombre entier positif.');
+    const nomLot = /^S(\d+)R(\d+)$/.exec(normLot($('p-lot').value)), cy = cycle($('p-cycle').value), r = cy ? numRound(cy.round) : rFutur;
+    if (nomLot && (normSalle($('p-salle').value) !== 'Salle ' + (+nomLot[1]) || +nomLot[2] !== r)) throw new Error('Le numéro de lot ne correspond pas à la salle et au round choisis.');
     if (!L.length) throw new Error('Indiquez au moins une mère et un nombre de boutures.');
     L.forEach(l => { const m = mere(l.numero); if (l.nb !== Math.round(l.nb) || l.nb > 5000) throw new Error('Nombre de boutures invalide pour ' + nomMere(m) + '.');
       if (m.creation && m.creation > date) throw new Error('La mère ' + nomMere(m) + " n'existait pas encore à cette date."); });
-    const cy = cycle($('p-cycle').value);
     enfiler('prendreBoutures', [{ date, salle:$('p-salle').value, lot:$('p-lot').value.trim(), notes:$('p-notes').value, lignes:L,
-      round:cy ? cy.round : '', cycle:cy ? cy.id : '' }]); fermer();
+      round:cy ? cy.round : rFutur ? 'round ' + rFutur : '', cycle:cy ? cy.id : '' }]); fermer();
     const t = L.reduce((s, l) => s + l.nb, 0); toast(t + ' bouture' + (t > 1 ? 's' : '') + ' enregistrée' + (t > 1 ? 's' : ''));
   });
 }
