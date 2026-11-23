@@ -599,8 +599,10 @@ function formLot(cle) {
     majRound();
   };
   const majRound = () => {
-    const c = cycle($('l-cycle').value), autre = !c;
-    $('l-round').classList.toggle('hidden', !autre);
+    const c = cycle($('l-cycle').value), autre = !c, sr = /^Salle [12]$/.test(normSalle($('l-salle').value));
+    $('l-cycle').closest('div').classList.toggle('hidden', sr);
+    $('l-round').classList.toggle('hidden', !autre || sr);
+    if (sr) { $('l-hint').textContent = 'Salle sans round.'; return; }
     if (autre && !$('l-round').value) $('l-round').value = cycle0 ? '' : round0;
     $('l-hint').textContent = c ? 'Round du calendrier : début ' + fDate(c.debut) + (c.floraison ? ' · floraison ' + fDate(c.floraison) : '') + (c.recolte ? ' · récolte prévue ' + fDate(c.recolte) : '') : 'Ce round n\'est pas encore créé dans le calendrier : inscrivez son numéro.';
   };
@@ -613,8 +615,9 @@ function formLot(cle) {
     else h.firstChild.textContent = 'Restants avant transfert d\'après les destructions inscrites : ' + pl(x.avantTransfert) + '. '; });
   majCycles();
   $('l-ok').onclick = () => soumettre('l-ok', async () => {
-    const c = cycle($('l-cycle').value), d4 = $('l-4po').value, tr = $('l-tr').value, nb = $('l-nb').value.trim();
-    const round = c ? c.round : $('l-round').value.trim();
+    const sr = /^Salle [12]$/.test(normSalle($('l-salle').value));
+    const c = sr ? null : cycle($('l-cycle').value), d4 = $('l-4po').value, tr = $('l-tr').value, nb = $('l-nb').value.trim();
+    const round = sr ? '' : c ? c.round : $('l-round').value.trim();
     if (d4) { pasFutur(d4); if (d4 < x.debut) throw new Error('La mise en 4 pouces précède la prise de boutures (' + fDate(x.debut) + ').'); }
     if (tr) { pasFutur(tr); if (tr < x.debut) throw new Error('Le transfert précède la prise de boutures (' + fDate(x.debut) + ').'); }
     if (d4 && tr && tr < d4) throw new Error('Le transfert ne peut pas précéder la mise en 4 pouces.');
@@ -832,10 +835,10 @@ function formPrise(pre) {
   ouvrir(tete('Prise de boutures') +
     '<label for="p-date">Date</label><input id="p-date" type="date" max="' + S.d.today + '" value="' + S.d.today + '">' +
     '<label>Salle de destination</label><input type="hidden" id="p-salle"><div class="chips wrap" id="p-salles">' +
-      S.d.salles.filter(x => !/^Salle [12]$/.test(normSalle(x))).map(x => '<button type="button" class="chip big" data-ps="' + esc(x) + '">' + esc(x) + '</button>').join('') + '</div>' +
-    '<label>Round de destination</label><input type="hidden" id="p-cycle"><div class="chips wrap" id="p-rounds"><span class="muted">Choisissez d\'abord la salle.</span></div>' +
+      S.d.salles.map(x => '<button type="button" class="chip big" data-ps="' + esc(x) + '">' + esc(x) + '</button>').join('') + '</div>' +
+    '<div id="p-rbloc"><label>Round de destination</label><input type="hidden" id="p-cycle"><div class="chips wrap" id="p-rounds"><span class="muted">Choisissez d\'abord la salle.</span></div>' +
     '<label for="p-round">Numéro du round</label><input id="p-round" type="number" inputmode="numeric" min="1" step="1" placeholder="ex. 15" disabled>' +
-    '<div class="hint">Choisissez un bouton ou saisissez un autre numéro, même si le round n\'est pas encore au calendrier.</div>' +
+    '<div class="hint">Choisissez un bouton ou saisissez un autre numéro, même si le round n\'est pas encore au calendrier.</div></div>' +
     '<label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="rempli automatiquement, ex. S4R16">' +
     '<label>Mères et nombre de boutures</label>' +
     '<div class="chips" id="p-cults">' + ['Tous'].concat(cults).map(c => '<button class="chip' + (c === c0 ? ' on' : '') + '" data-pc="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>' +
@@ -850,12 +853,16 @@ function formPrise(pre) {
   filtre(c0);
   $('p-cults').onclick = e => { const b = e.target.closest('[data-pc]'); if (b) filtre(b.dataset.pc); };
   let lotAuto = true, rFutur = 0;   // le no de lot suit la salle et le round tant qu'on ne l'a pas tapé soi-même
-  const majLot = () => { if (!lotAuto) return; const sn = /(\d+)$/.exec(normSalle($('p-salle').value)), cy = cycle($('p-cycle').value), r = cy ? numRound(cy.round) : rFutur;
+  const sansRound = () => /^Salle [12]$/.test(normSalle($('p-salle').value));   // salle 1 (4 pouces) et salle 2 (mères) : pas de round
+  const majLot = () => { if (!lotAuto) return;
+    if (sansRound()) { $('p-lot').value = 'S' + normSalle($('p-salle').value).slice(-1) + '-' + ($('p-date').value || S.d.today).replace(/-/g, ''); return; }
+    const sn = /(\d+)$/.exec(normSalle($('p-salle').value)), cy = cycle($('p-cycle').value), r = cy ? numRound(cy.round) : rFutur;
     $('p-lot').value = sn && r ? 'S' + sn[1] + 'R' + r : ''; };
   const majRounds = () => { const cs = cyclesDe($('p-salle').value), avant = $('p-cycle').value;
     if (!cs.some(c => c.id === avant)) $('p-cycle').value = '';
     const sel = $('p-cycle').value, recents = cs.filter((c, i) => i < 3 || c.id === sel).reverse(), proch = cs.reduce((m, c) => Math.max(m, numRound(c.round) || 0), 0) + 1;
     if (sel) rFutur = 0;
+    $('p-rbloc').classList.toggle('hidden', sansRound()); if (sansRound()) { $('p-cycle').value = ''; rFutur = 0; }
     $('p-round').disabled = !$('p-salle').value;
     $('p-round').value = (sel ? numRound(cycle(sel).round) : rFutur) || '';
     $('p-rounds').innerHTML = !$('p-salle').value ? '<span class="muted">Choisissez d\'abord la salle.</span>' :
@@ -882,6 +889,7 @@ function formPrise(pre) {
     if ($('p-salle').value === b.dataset.ps && ((c && $('p-cycle').value === c.id) || (!c && rFutur === +n[2]))) return;   // déjà en place : on ne redessine pas sous le doigt
     $('p-salle').value = b.dataset.ps; document.querySelectorAll('#p-salles .chip').forEach(x => x.classList.toggle('on', x === b));
     $('p-cycle').value = c ? c.id : ''; rFutur = c ? 0 : +n[2]; majRounds(); });
+  $('p-date').addEventListener('change', () => { if (sansRound()) majLot(); });
   const lignes = () => [...document.querySelectorAll('[data-pn]')].map(i => ({ numero:i.dataset.pn, nb:+i.value || 0 })).filter(l => l.nb > 0);
   $('p-list').addEventListener('input', () => { const t = lignes().reduce((s, l) => s + l.nb, 0), n = lignes().length;
     $('p-tot').textContent = 'Total : ' + t + ' bouture' + (t > 1 ? 's' : '') + (n ? ' · ' + n + ' mère' + (n > 1 ? 's' : '') : ''); });
