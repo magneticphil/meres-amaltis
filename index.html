@@ -817,7 +817,7 @@ function formMere() {
     '<div class="hint">Laissez vide : la date sera lue dans le numéro, ou notée « inconnue ».</div>' +
     '<label for="m-lotorig">Provient du lot (facultatif)</label><select id="m-lotorig"><option value="">—</option>' +
       lots().filter(x => x.restants > 0).slice(0, 15).map(x => '<option value="' + esc(x.lot) + '">' + esc(x.lot) + ' — ' + esc(fDate(x.debut)) + ' · ' + esc([...new Set(x.prises.map(b => b.cultivar))].join(', ')) + '</option>').join('') + '</select>' +
-    '<div class="hint">Bouture d\'un lot gardée pour refaire une mère : le lot comptera un plant de moins au transfert.</div>' +
+    '<div class="hint">Bouture d\'un lot gardée pour refaire une mère : le lot comptera un plant de moins au transfert. Sans numéro unique, la mère reçoit un numéro provisoire, à remplacer plus tard depuis sa fiche.</div>' +
     '<label for="m-parent">Mère d\'origine (facultatif)</label><select id="m-parent"><option value="">—</option>' +
     actives().map(m => '<option value="' + esc(m.numero) + '">' + esc(nomMere(m)) + ' — ' + esc(abrege(m.numero)) + '</option>').join('') + '</select>' +
     '<label for="m-empl">Emplacement</label><input id="m-empl" type="text" placeholder="Salle 2, table…">' +
@@ -840,16 +840,18 @@ function formMere() {
     if (!$('m-empl').value) $('m-empl').value = 'Salle 2'; });
   $('m-parent').addEventListener('change', () => { const p = mere($('m-parent').value); if (p && !$('m-cult').value) $('m-cult').value = p.cultivar; });
   $('m-ok').onclick = () => soumettre('m-ok', async () => {
-    const n = norm($('m-num').value), libre = $('m-libre').checked;
-    nonVide(n, 'Le numéro unique est obligatoire.');
+    let n = norm($('m-num').value), libre = $('m-libre').checked, prov = false;
+    if (!n && $('m-lotorig').value) { n = provNum(S.d.today, rid(), 1); libre = prov = true; }   // bouture d'un lot : numéro provisoire en attendant le définitif
+    nonVide(n, 'Le numéro unique est obligatoire (ou choisissez le lot d\'origine pour un numéro provisoire).');
     if (!FORMAT.test(n) && !libre) throw new Error('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
     if (mere(n)) throw new Error('Ce numéro existe déjà : ' + n + '.');
     nonVide($('m-cult').value, 'Le cultivar est obligatoire.');
     const lo = lots().find(y => y.lot === $('m-lotorig').value);
     if (lo && !lo.prises.some(b => b.cultivar.toLowerCase() === $('m-cult').value.trim().toLowerCase())) throw new Error('Le cultivar ne correspond pas au lot ' + lo.lot + '.');
     if ($('m-crea').value) pasFutur($('m-crea').value, 'La date de création ne peut pas être dans le futur.');
-    enfiler('creerMere', [{ numero:n, surnom:$('m-surnom').value, lot:$('m-lot').value, cultivar:$('m-cult').value,
-      creation:$('m-crea').value, parent:$('m-parent').value, emplacement:$('m-empl').value, notes:$('m-notes').value, formatLibre:libre, lotOrigine:$('m-lotorig').value }]);
+    enfiler('creerMere', [{ numero:n, surnom:$('m-surnom').value, lot:prov ? '' : $('m-lot').value, cultivar:$('m-cult').value,
+      creation:$('m-crea').value || (prov ? S.d.today : ''), parent:$('m-parent').value, emplacement:$('m-empl').value,
+      notes:(prov ? 'Numéro provisoire : en attente du numéro définitif' + ($('m-notes').value.trim() ? ' · ' : '') : '') + $('m-notes').value, formatLibre:libre, lotOrigine:$('m-lotorig').value }]);
     fermer(); toast('Mère enregistrée');
   });
 }
