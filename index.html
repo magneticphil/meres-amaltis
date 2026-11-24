@@ -363,7 +363,7 @@ function superposer(srv) {
       const crea = a[0].creation || dateDuNumero(n);
       d.meres.push({ numero:n, surnom:(a[0].surnom || '').trim(), lot:(a[0].lot || '').trim().toUpperCase() || lotDuNumero(n), cultivar:(a[0].cultivar || '').trim(),
         creation:crea, source:a[0].creation ? 'saisie' : crea ? 'numéro' : 'inconnue', parent:a[0].parent ? norm(a[0].parent) : '', emplacement:(a[0].emplacement || '').trim(),
-        statut:'active', destruction:'', notes:(a[0].notes || '').trim(), creePar:moi, creeLe:it.at, queued:true });
+        statut:'active', destruction:'', notes:(a[0].notes || '').trim(), creePar:moi, creeLe:it.at, lotOrigine:(a[0].lotOrigine || '').trim(), queued:true });
     } else if (it.fn === 'modifierMere') {
       const m = trouve(a[0]); if (!m) return;
       ['surnom', 'emplacement', 'notes', 'cultivar', 'lot'].forEach(k => { if (k in a[1]) m[k] = String(a[1][k]).trim(); });
@@ -517,24 +517,27 @@ function lots() {
     if (d.statut !== 'annulée') x.detruits[d.etape] = (x.detruits[d.etape] || 0) + (+d.nombre || 0); });
   Object.values(L).forEach(x => { x.totalDetruits = Object.values(x.detruits).reduce((s, n) => s + n, 0); x.restants = x.preleves - x.totalDetruits;
     x.lien = (S.d.lots || []).find(l => normLot(l.lot) === x.cle) || null;
-    x.avantTransfert = x.preleves - (x.detruits['Boutures non plantées'] || 0) - (x.detruits['4 pouces'] || 0); });
+    x.versMeres = S.d.meres.filter(m => normLot(m.lotOrigine) === x.cle);   // boutures gardées pour refaire des mères (salle 2)
+    x.restants -= x.versMeres.length;
+    x.avantTransfert = x.preleves - (x.detruits['Boutures non plantées'] || 0) - (x.detruits['4 pouces'] || 0) - x.versMeres.length; });
   return Object.values(L).sort((a, b) => b.fin.localeCompare(a.fin) || a.lot.localeCompare(b.lot));
 }
 const pl = n => n + ' plant' + (Math.abs(n) > 1 ? 's' : '');
 function decompteHtml(x, ajout) {
   ajout = ajout || {};
   const det = e => (x.detruits[e] || 0) + (ajout.etape === e ? ajout.nombre || 0 : 0);
-  const total = ETAPES.reduce((s, e) => s + det(e), 0), reste = x.preleves - total;
+  const total = ETAPES.reduce((s, e) => s + det(e), 0), reste = x.preleves - total - (x.versMeres || []).length;
   return '<div class="kv">' +
     '<div><span>Boutures prélevées</span><b>' + x.preleves + '</b></div>' +
     ETAPES.map(e => '<div><span>Détruites — ' + esc(e) + '</span><b>' + det(e) + (ajout.etape === e && ajout.nombre ? ' <small style="color:var(--mute);font-weight:400">(dont ' + ajout.nombre + ' ici)</small>' : '') + '</b></div>').join('') +
+    ((x.versMeres || []).length ? '<div><span>Gardées pour refaire des mères</span><b>' + x.versMeres.length + '</b></div>' : '') +
     '<div><span>Restantes</span><b' + (reste < 0 ? ' style="color:var(--warn)"' : '') + '>' + reste + '</b></div></div>';
 }
 /* Plants restants au transfert en grande salle : prélevées − boutures non plantées − 4 pouces détruits. */
 function avertTransfert(x, ajout) {
   ajout = ajout || {};
   const det = e => (x.detruits[e] || 0) + (ajout.etape === e ? ajout.nombre || 0 : 0);
-  const n = x.preleves - det('Boutures non plantées') - det('4 pouces');
+  const n = x.preleves - det('Boutures non plantées') - det('4 pouces') - (x.versMeres || []).length;
   if (det('En salle') || NB_SALLE.includes(n) || n <= 0) return '';
   return '<div class="hint" style="color:var(--acc);margin-top:6px">Au transfert : ' + pl(n) + ', au lieu de ' + NB_SALLE.join(' ou ') +
     ' habituellement. Normal pour la salle 7, qui en reçoit moins ; sinon, vérifiez le nombre.</div>';
@@ -638,6 +641,7 @@ function traceTexte(x) {
   lignes.push('Mères : ' + Object.values(parMere).map(p => (p.m && p.m.surnom ? p.m.surnom + ' ' : '') + p.num + (p.m ? ' (' + p.m.cultivar + ')' : '') + ' ×' + p.nb).join(' ; '));
   lignes.push('Boutures prélevées : ' + x.preleves + ' le ' + [...new Set(x.prises.map(b => b.date))].sort().join(', '));
   ETAPES.forEach(e => { if (x.detruits[e]) lignes.push('Détruites (' + e + ') : ' + x.detruits[e]); });
+  if ((x.versMeres || []).length) lignes.push('Gardées pour refaire des mères (salle 2) : ' + x.versMeres.map(m => (m.surnom ? m.surnom + ' ' : '') + m.numero).join(', '));
   if (l.date4po) lignes.push('Mise en 4 pouces : ' + l.date4po);
   if (l.transfert) lignes.push('Transfert : ' + l.transfert + (l.transferes ? ' — ' + l.transferes + ' plants' : ''));
   if (c) lignes.push('Round : début ' + c.debut + (c.floraison ? ', floraison ' + c.floraison : '') + (c.recolte ? ', récolte prévue ' + c.recolte : '') + (c.fin ? ', fin ' + c.fin : ''));
@@ -750,6 +754,7 @@ function fiche(num) {
     '<div><span>Statut</span><b>' + (m.statut === 'active' ? '<span class="tag ok">active</span>' : '<span class="tag off">détruite le ' + fDate(m.destruction) + '</span>') + '</b></div>' +
     '<div><span>Création</span><b>' + (m.creation ? fDate(m.creation) + ' · ' + age(m.creation) + (src ? '<br><small style="color:var(--mute);font-weight:400">' + src + '</small>' : '') : '<span class="tag gold">inconnue</span>') + '</b></div>' +
     (m.parent ? '<div><span>Mère d\'origine</span><b class="num">' + esc(m.parent) + '</b></div>' : '') +
+    (m.lotOrigine ? '<div><span>Bouture du lot</span><b class="num">' + esc(m.lotOrigine) + '</b></div>' : '') +
     '<div><span>Emplacement</span><b>' + esc(m.emplacement || '—') + '</b></div>' +
     (m.notes ? '<div><span>Notes</span><b>' + esc(m.notes) + '</b></div>' : '') +
     '<div><span>Inscrite par</span><b>' + esc(m.creePar || '—') + (m.creeLe ? ' · ' + esc(m.creeLe.slice(0, 10)) : '') + '</b></div>' +
@@ -775,6 +780,9 @@ function formMere() {
     '<label for="m-cult">Cultivar</label><input id="m-cult" type="text" list="dl-cult">' + datalistCult() +
     '<label for="m-crea">Date de création</label><input id="m-crea" type="date" max="' + S.d.today + '">' +
     '<div class="hint">Laissez vide : la date sera lue dans le numéro, ou notée « inconnue ».</div>' +
+    '<label for="m-lotorig">Provient du lot (facultatif)</label><select id="m-lotorig"><option value="">—</option>' +
+      lots().filter(x => x.restants > 0).slice(0, 15).map(x => '<option value="' + esc(x.lot) + '">' + esc(x.lot) + ' — ' + esc(fDate(x.debut)) + ' · ' + esc([...new Set(x.prises.map(b => b.cultivar))].join(', ')) + '</option>').join('') + '</select>' +
+    '<div class="hint">Bouture d\'un lot gardée pour refaire une mère : le lot comptera un plant de moins au transfert.</div>' +
     '<label for="m-parent">Mère d\'origine (facultatif)</label><select id="m-parent"><option value="">—</option>' +
     actives().map(m => '<option value="' + esc(m.numero) + '">' + esc(nomMere(m)) + ' — ' + esc(abrege(m.numero)) + '</option>').join('') + '</select>' +
     '<label for="m-empl">Emplacement</label><input id="m-empl" type="text" placeholder="Salle 2, table…">' +
@@ -789,6 +797,12 @@ function formMere() {
     h.className = 'hint ok'; h.textContent = 'Lot ' + lotDuNumero(n) + (d ? ' · créée le ' + fDate(d) + ' (lue dans le numéro)' : ' · date non lisible dans le numéro');
   };
   $('m-num').addEventListener('input', maj);
+  $('m-lotorig').addEventListener('change', () => {
+    const x = lots().find(y => y.lot === $('m-lotorig').value); if (!x) return;
+    const ms = [...new Set(x.prises.map(b => (mereDe(b.numero) || {}).numero).filter(Boolean))];
+    if (ms.length === 1 && [...$('m-parent').options].some(o => o.value === ms[0])) $('m-parent').value = ms[0];
+    const cs = [...new Set(x.prises.map(b => b.cultivar))]; if (cs.length === 1) $('m-cult').value = cs[0];
+    if (!$('m-empl').value) $('m-empl').value = 'Salle 2'; });
   $('m-parent').addEventListener('change', () => { const p = mere($('m-parent').value); if (p && !$('m-cult').value) $('m-cult').value = p.cultivar; });
   $('m-ok').onclick = () => soumettre('m-ok', async () => {
     const n = norm($('m-num').value), libre = $('m-libre').checked;
@@ -796,9 +810,11 @@ function formMere() {
     if (!FORMAT.test(n) && !libre) throw new Error('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
     if (mere(n)) throw new Error('Ce numéro existe déjà : ' + n + '.');
     nonVide($('m-cult').value, 'Le cultivar est obligatoire.');
+    const lo = lots().find(y => y.lot === $('m-lotorig').value);
+    if (lo && !lo.prises.some(b => b.cultivar.toLowerCase() === $('m-cult').value.trim().toLowerCase())) throw new Error('Le cultivar ne correspond pas au lot ' + lo.lot + '.');
     if ($('m-crea').value) pasFutur($('m-crea').value, 'La date de création ne peut pas être dans le futur.');
     enfiler('creerMere', [{ numero:n, surnom:$('m-surnom').value, lot:$('m-lot').value, cultivar:$('m-cult').value,
-      creation:$('m-crea').value, parent:$('m-parent').value, emplacement:$('m-empl').value, notes:$('m-notes').value, formatLibre:libre }]);
+      creation:$('m-crea').value, parent:$('m-parent').value, emplacement:$('m-empl').value, notes:$('m-notes').value, formatLibre:libre, lotOrigine:$('m-lotorig').value }]);
     fermer(); toast('Mère enregistrée');
   });
 }

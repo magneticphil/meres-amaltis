@@ -33,7 +33,7 @@ const TZ = 'America/Toronto';
 
 const HEAD = {
   'Mères': ['Numéro', 'Surnom', 'Lot', 'Cultivar', 'Date de création', 'Source de la date', "Mère d'origine",
-    'Emplacement', 'Statut', 'Date de destruction', 'Notes', 'Créée par', 'Créée le', 'Modifiée par', 'Modifiée le'],
+    'Emplacement', 'Statut', 'Date de destruction', 'Notes', 'Créée par', 'Créée le', 'Modifiée par', 'Modifiée le', "Lot d'origine"],
   'Destructions': ['ID', 'Date', 'Numéro', 'Lot', 'Cultivar', 'Poids (g)', 'Méthode', 'Raison', 'Témoin 1', 'Témoin 2',
     'RSDC complété', 'Saisi par', 'Saisi le', 'Statut', 'Annulé par', 'Annulé le', "Motif d'annulation"],
   'Boutures': ['Date de création', 'No. unique du plant mère', 'Nombre de boutures', 'Cultivar', 'Salle', 'No. de lot',
@@ -50,7 +50,7 @@ const HEAD = {
 };
 // Index des colonnes de l'onglet Mères
 const M = { num: 0, surnom: 1, lot: 2, cult: 3, crea: 4, src: 5, parent: 6, empl: 7, statut: 8, destr: 9, notes: 10,
-  creePar: 11, creeLe: 12, modPar: 13, modLe: 14 };
+  creePar: 11, creeLe: 12, modPar: 13, modLe: 14, lotOrig: 15 };
 
 /* ====================== Installation (facultatif : les onglets existent déjà) ====================== */
 
@@ -199,7 +199,7 @@ function mereDto_(x) {
   return { numero: r[M.num], surnom: r[M.surnom], lot: r[M.lot], cultivar: r[M.cult], creation: r[M.crea],
     source: r[M.src], parent: r[M.parent], emplacement: r[M.empl], statut: r[M.statut] || 'active',
     destruction: r[M.destr], notes: r[M.notes], creePar: r[M.creePar], creeLe: r[M.creeLe],
-    modPar: r[M.modPar], modLe: r[M.modLe] };
+    modPar: r[M.modPar], modLe: r[M.modLe], lotOrigine: r[M.lotOrig] || '' };
 }
 function boutureDto_(x) {
   const r = x.r;
@@ -285,14 +285,22 @@ function creerMere(nom, code, m, requestId) {
     else if (creation > today_()) throw refus_('La date de création ne peut pas être dans le futur.');
     const lot = txt_(m.lot, 30).toUpperCase() || lotDuNumero_(numero);
     const parent = m.parent ? normNum_(m.parent) : '';
+    // Bouture d'un lot gardée pour refaire une mère : le lot compte un plant de moins au transfert
+    let lotOrig = '';
+    if (m.lotOrigine) {
+      const k = normLot_(m.lotOrigine), prises = rows_('Boutures').filter(x => normLot_(x.r[5]) === k);
+      if (!prises.length) throw refus_("Lot d'origine inconnu : " + txt_(m.lotOrigine, 40) + '.');
+      lotOrig = prises[0].r[5];
+      if (prises[0].r[3] && prises.every(x => x.r[3].toLowerCase() !== cultivar.toLowerCase())) throw refus_("Le cultivar ne correspond pas au lot d'origine (" + prises[0].r[3] + ').');
+    }
     const row = [numero, txt_(m.surnom, 30), lot, cultivar, creation, source, parent, txt_(m.emplacement, 60),
-      'active', '', txt_(m.notes, 500), u.nom, now_(), '', ''];
+      'active', '', txt_(m.notes, 500), u.nom, now_(), '', '', lotOrig];
     append_('Mères', row);
     // Registre de végétation : une ligne par mère (date de création ; destruction remplie plus tard)
     append_('Végétation', [creation, '', numero, 1, cultivar, u.nom, txt_(m.notes, 200)]);
     journal_(u.nom, 'création', 'mère', numero,
       [m.surnom && 'surnom ' + txt_(m.surnom, 30), 'lot ' + lot, cultivar, 'créée ' + (creation || 'date inconnue'),
-        parent && 'origine ' + parent, m.formatLibre && 'format non standard'].filter(Boolean).join(' · '));
+        parent && 'origine ' + parent, lotOrig && 'bouture du lot ' + lotOrig, m.formatLibre && 'format non standard'].filter(Boolean).join(' · '));
     return mereDto_({ r: row });
   });
 }
