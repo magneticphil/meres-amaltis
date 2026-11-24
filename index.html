@@ -338,7 +338,7 @@ async function refresh(quiet) {
 }
 
 /* ---------- Envoi en arrière-plan des saisies ----------
-   Une action (création, prise de boutures, destruction, modification, RSDC) est affichée et comptée
+   Une action (création, prise de boutures, destruction, modification) est affichée et comptée
    aussitôt, puis gardée sur le téléphone (file d'envoi) jusqu'à ce que le serveur la confirme.
    Chaque action a un identifiant unique : renvoyée plusieurs fois (réseau lent, app fermée puis
    rouverte), elle n'est enregistrée qu'une fois (le serveur l'inscrit au Journal, colonne Requête). */
@@ -794,7 +794,7 @@ function fiche(num) {
     (m.statut === 'active' ? '<div class="foot"><button class="btn pri" data-prise="' + esc(m.numero) + '">Prise de boutures</button><button class="btn dan" data-detr="' + esc(m.numero) + '">Détruire</button></div>' : '') +
     (estProv(m.numero) && m.statut === 'active' ? '<div class="foot" style="margin-top:8px"><button class="btn pri" data-renum="' + esc(m.numero) + '">Inscrire le numéro définitif</button></div>' : '') +
     '<div class="foot" style="margin-top:8px"><button class="btn" data-modif="' + esc(m.numero) + '">Modifier la fiche</button></div>' +
-    (ds ? '<h2>Destruction</h2><div class="kv"><div><span>Date</span><b>' + fDate(ds.date) + '</b></div>' + (ds.poids !== '' && ds.poids != null ? '<div><span>Poids</span><b>' + esc(ds.poids) + ' g</b></div>' : '') + '<div><span>Méthode</span><b>' + esc(ds.methode) + '</b></div><div><span>Raison</span><b>' + esc(ds.raison) + '</b></div><div><span>Témoins</span><b>' + esc(ds.temoin1) + ', ' + esc(ds.temoin2) + '</b></div><div><span>RSDC</span><b>' + (ds.rsdc === 'oui' ? 'complété' : 'à compléter') + '</b></div></div>' : '') +
+    (ds ? '<h2>Destruction</h2><div class="kv"><div><span>Date</span><b>' + fDate(ds.date) + '</b></div>' + (ds.poids !== '' && ds.poids != null ? '<div><span>Poids</span><b>' + esc(ds.poids) + ' g</b></div>' : '') + '<div><span>Méthode</span><b>' + esc(ds.methode) + '</b></div><div><span>Raison</span><b>' + esc(ds.raison) + '</b></div><div><span>Témoins</span><b>' + esc(ds.temoin1) + ', ' + esc(ds.temoin2) + '</b></div></div>' : '') +
     '<h2>Boutures <small>' + tot + ' au total</small></h2>' +
     (bt.length ? '<div class="kv">' + bt.map(b => '<div><span>' + fDate(b.date) + ' · ' + esc(b.salle) + ' · lot ' + esc(b.lot) + '</span><b>×' + esc(b.nb) + '</b></div>').join('') + '</div>' : '<div class="empty">Aucune prise inscrite.</div>') +
     (lesLots.length ? '<h2>Lots et salles de destination</h2>' + lesLots.map(x => '<div class="card tap" data-trace="' + esc(x.cle) + '"><div class="bar"></div><div class="body"><div class="ttl">Lot ' + esc(x.lot) + '</div>' + ligneLien(x) + '</div></div>').join('') : '') +
@@ -1091,7 +1091,6 @@ document.addEventListener('click', e => {
   else if (d.andp) formMotif('Annuler la destruction de plants', 'Annuler la destruction', m => { enfiler('annulerDestructionPlants', [d.andp, m]); toast('Destruction annulée'); });
   else if (d.modif) formModif(d.modif);
   else if (d.renum) formRenum(d.renum);
-  else if (d.rsdc) { if (confirm('Confirmer que cette destruction est inscrite au RSDC ?')) { enfiler('marquerRsdc', [d.rsdc]); toast('RSDC complété'); } }
   else if (d.annd) formMotif('Annuler la destruction', 'Annuler la destruction', m => { enfiler('annulerDestruction', [d.annd, m]); toast('Destruction annulée'); });
   else if (d.supb) formMotif('Supprimer la ligne de boutures', 'Supprimer', m => { enfiler('supprimerBouture', [d.supb, m]); toast('Ligne supprimée'); });
 });
