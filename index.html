@@ -407,6 +407,9 @@ function superposer(srv) {
     } else if (it.fn === 'annulerDestructionPlants') {
       const x = d.destructionsPlants.find(y => y.id === a[0]); if (x) { x.statut = 'annulée'; x.annulePar = moi; x.motif = a[1]; }
     } else if (it.fn === 'supprimerBouture') {
+      const b = d.boutures.find(x => x.id === a[0]);
+      if (b && normSalle(b.salle) === 'Salle 2') { let reste = +b.nb || 0;
+        d.meres.forEach(m => { if (reste > 0 && estProv(m.numero) && m.statut === 'active' && norm(m.parent) === norm(b.numero) && normLot(m.lotOrigine) === normLot(b.lot) && m.creation === b.date) { m.statut = 'annulée'; reste--; } }); }
       d.boutures = d.boutures.filter(b => b.id !== a[0]);
     }
   });
@@ -488,10 +491,10 @@ function hdrMeres() {
     (isAdmin() && S.cult !== 'Tous' && cults[S.cult] ? '<button class="btn" data-renc="' + esc(S.cult) + '" style="margin-bottom:4px">Renommer le cultivar « ' + esc(S.cult) + ' » (' + cults[S.cult] + ' mère' + (cults[S.cult] > 1 ? 's' : '') + ')</button>' : '');
 }
 function renderMeres() {
-  const act = actives(), det = S.d.meres.filter(m => m.statut !== 'active');
+  const act = actives(), det = S.d.meres.filter(m => m.statut === 'détruite'), visibles = S.d.meres.filter(m => m.statut !== 'annulée');
   const sansDate = act.filter(m => !m.creation).length;
   const q = norm(S.q);
-  let liste = S.filtre === 'active' ? act : S.filtre === 'détruite' ? det : S.d.meres.slice();
+  let liste = S.filtre === 'active' ? act : S.filtre === 'détruite' ? det : visibles.slice();
   if (S.cult !== 'Tous') liste = liste.filter(m => m.cultivar === S.cult);
   if (q) liste = liste.filter(m => [m.numero, m.surnom, m.cultivar, m.lot, m.emplacement].some(v => norm(v).includes(q)));
   liste.sort((a, b) => (a.cultivar || '').localeCompare(b.cultivar || '', 'fr') || (a.surnom || '').localeCompare(b.surnom || '', 'fr', { numeric:true }) || a.numero.localeCompare(b.numero));
@@ -529,7 +532,7 @@ function lots() {
     if (d.statut !== 'annulée') x.detruits[d.etape] = (x.detruits[d.etape] || 0) + (+d.nombre || 0); });
   Object.values(L).forEach(x => { x.totalDetruits = Object.values(x.detruits).reduce((s, n) => s + n, 0); x.restants = x.preleves - x.totalDetruits;
     x.lien = (S.d.lots || []).find(l => normLot(l.lot) === x.cle) || null;
-    x.versMeres = S.d.meres.filter(m => normLot(m.lotOrigine) === x.cle);   // boutures gardées pour refaire des mères (salle 2)
+    x.versMeres = S.d.meres.filter(m => normLot(m.lotOrigine) === x.cle && m.statut !== 'annulée');   // boutures gardées pour refaire des mères (salle 2)
     x.restants -= x.versMeres.length;
     x.avantTransfert = x.preleves - (x.detruits['Boutures non plantées'] || 0) - (x.detruits['4 pouces'] || 0) - x.versMeres.length; });
   return Object.values(L).sort((a, b) => b.fin.localeCompare(a.fin) || a.lot.localeCompare(b.lot));
@@ -581,6 +584,8 @@ function renderBoutures() {
 /* Ligne « → Salle 4 · round 15 · transfert le … » sous l'en-tête du lot */
 function ligneLien(x) {
   const l = x.lien;
+  if (!l && /^Salle [12]$/.test(normSalle(x.salle))) return '<div class="meta" style="margin-bottom:4px"><span class="tag ok">→ ' + esc(normSalle(x.salle)) + '</span>' +
+    (normSalle(x.salle) === 'Salle 2' ? ' · ' + pl((x.versMeres || []).filter(m => m.statut === 'active').length).replace('plant', 'mère') + ' créée' + ((x.versMeres || []).filter(m => m.statut === 'active').length > 1 ? 's' : '') : '') + '</div>';
   if (!l) return '<div class="meta" style="margin-bottom:4px"><span class="tag warn">non rattaché</span> salle et round de destination à préciser</div>';
   const c = cycleDe(l);
   return '<div class="meta" style="margin-bottom:4px"><span class="tag ok">→ ' + esc(l.salle) + (l.round ? ' · ' + esc(l.round) : '') + '</span>' +
@@ -757,14 +762,15 @@ function formRenum(num) {
   ouvrir(tete('Numéro définitif') +
     '<div class="meta">' + esc(nomMere(m)) + ' · numéro provisoire ' + esc(m.numero) + (m.lotOrigine ? ' · bouture du lot ' + esc(m.lotOrigine) : '') + '</div>' +
     '<label for="r-num">Numéro unique (forme complète)</label><input id="r-num" type="text" autocapitalize="characters" autocomplete="off" placeholder="202611230001_036BG">' +
+    '<label class="check" style="margin-top:8px"><input type="checkbox" id="r-libre"> Numéro hors format (exceptionnel)</label>' +
     '<div class="hint">Le numéro provisoire sera remplacé partout : fiche, boutures, destructions et registre de végétation.</div>' +
     pied('Enregistrer', 'r-ok'));
   $('r-ok').onclick = () => soumettre('r-ok', async () => {
     const n = norm($('r-num').value);
     nonVide(n, 'Le numéro est obligatoire.');
-    if (!FORMAT.test(n)) throw new Error('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
+    if (!FORMAT.test(n) && !$('r-libre').checked) throw new Error('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
     if (mere(n)) throw new Error('Ce numéro existe déjà : ' + n + '.');
-    enfiler('renumeroterMere', [m.numero, n]); fermer(); toast('Numéro ' + n + ' inscrit');
+    enfiler('renumeroterMere', [m.numero, n, $('r-libre').checked]); fermer(); toast('Numéro ' + n + ' inscrit');
   });
 }
 function fiche(num) {

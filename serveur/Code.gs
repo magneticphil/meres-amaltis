@@ -307,18 +307,20 @@ function creerMere(nom, code, m, requestId) {
 
 /** Numéro provisoire d'une mère issue d'une bouture pour la salle 2 : le même côté écran et côté serveur. */
 function provNum_(date, requestId, k) {
+  if (!requestId) requestId = req_ || id_();
   return 'PROV-' + String(date).replace(/-/g, '') + '-' + String(requestId || 'X').replace(/[^0-9A-Za-z]/g, '').slice(-4).toUpperCase() + '-' + k;
 }
 
 /** Remplace un numéro provisoire par le numéro définitif, partout où il apparaît. */
-function renumeroterMere(nom, code, ancien, nouveau, requestId) {
+function renumeroterMere(nom, code, ancien, nouveau, requestId, formatLibre) {
   const u = auth_(nom, code);
   return action_(requestId, () => {
     const a = normNum_(ancien), n = normNum_(nouveau);
     const x = trouverMere_(a);
     if (!x) throw refus_('Mère introuvable : ' + txt_(ancien, 60) + '.');
     if (!/^PROV-/.test(a)) throw refus_('Seul un numéro provisoire peut être remplacé.');
-    if (!FORMAT_NUM_.test(n)) throw refus_('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
+    if (!n) throw refus_('Le numéro est obligatoire.');
+    if (!FORMAT_NUM_.test(n) && !formatLibre) throw refus_('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
     if (trouverMere_(n)) throw refus_('Ce numéro existe déjà : ' + n + '.');
     const notes = String(x.r[M.notes] || '').replace(/Numéro provisoire : en attente du numéro (définitif|de Marc)\.?\s*/, '').trim();
     setCells_('Mères', x.row, M.num, [n]);
@@ -459,6 +461,20 @@ function supprimerBouture(nom, code, id, motif, requestId) {
     sheet_('Boutures').deleteRow(x.row);
     journal_(u.nom, 'suppression', 'boutures', id,
       'Motif : ' + txt_(motif) + ' · ligne supprimée : ' + x.r.slice(0, 8).join(' | '));
+    // Prise pour la salle 2 : les mères à numéro provisoire qu'elle avait créées sont annulées (pas détruites : elles n'ont jamais existé)
+    if (normSalle_(x.r[4]) === 'Salle 2') {
+      let reste = Math.round(+x.r[2]) || 0, n = 0;
+      rows_('Mères').forEach(m => { if (reste <= 0) return;
+        if (/^PROV-/.test(normNum_(m.r[M.num])) && (m.r[M.statut] || 'active') === 'active' && normNum_(m.r[M.parent]) === normNum_(x.r[1])
+          && normLot_(m.r[M.lotOrig]) === normLot_(x.r[5]) && m.r[M.crea] === x.r[0]) {
+          setCells_('Mères', m.row, M.statut, ['annulée']);
+          setCells_('Mères', m.row, M.notes, [(m.r[M.notes] ? m.r[M.notes] + ' · ' : '') + 'annulée : prise de boutures supprimée']);
+          setCells_('Mères', m.row, M.modPar, [u.nom, now_()]);
+          rows_('Végétation').forEach(v => { if (normNum_(v.r[2]) === normNum_(m.r[M.num])) { setCells_('Végétation', v.row, 3, [0]); setCells_('Végétation', v.row, 6, ['annulée : prise de boutures supprimée']); } });
+          reste--; n++;
+        } });
+      if (n) journal_(u.nom, 'annulation', 'mère', x.r[5], n + ' mère' + (n > 1 ? 's' : '') + ' à numéro provisoire annulée' + (n > 1 ? 's' : '') + ' avec la prise');
+    }
     return true;
   });
 }
@@ -684,7 +700,8 @@ function annulerDestructionPlants(nom, code, id, motif, requestId) {
 const API_ = {
   listerNoms: () => listerNoms(),
   charger: (n, c) => charger(n, c),
-  renumeroterMere: (n, c, a, b, r) => renumeroterMere(n, c, a, b, r),
+  // arguments : ancien, nouveau, hors format (booléen), puis l'identifiant de requête ajouté par la file d'envoi
+  renumeroterMere: (n, c, a, b, f, r) => typeof f === 'string' && r === undefined ? renumeroterMere(n, c, a, b, f, false) : renumeroterMere(n, c, a, b, r, f === true),
   journal: (n, c, k) => journal(n, c, k),
   creerMere: (n, c, m, r) => creerMere(n, c, m, r),
   modifierMere: (n, c, num, ch, r) => modifierMere(n, c, num, ch, r),
