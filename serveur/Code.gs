@@ -310,7 +310,7 @@ function provNum_(date, requestId, k) {
   return 'PROV-' + String(date).replace(/-/g, '') + '-' + String(requestId || 'X').replace(/[^0-9A-Za-z]/g, '').slice(-4).toUpperCase() + '-' + k;
 }
 
-/** Remplace un numéro provisoire par le numéro attribué par Marc, partout où il apparaît. */
+/** Remplace un numéro provisoire par le numéro définitif, partout où il apparaît. */
 function renumeroterMere(nom, code, ancien, nouveau, requestId) {
   const u = auth_(nom, code);
   return action_(requestId, () => {
@@ -320,7 +320,7 @@ function renumeroterMere(nom, code, ancien, nouveau, requestId) {
     if (!/^PROV-/.test(a)) throw refus_('Seul un numéro provisoire peut être remplacé.');
     if (!FORMAT_NUM_.test(n)) throw refus_('Le numéro doit être au format complet (12 chiffres, « _ », lot), par exemple 202411020026_036BG.');
     if (trouverMere_(n)) throw refus_('Ce numéro existe déjà : ' + n + '.');
-    const notes = String(x.r[M.notes] || '').replace(/Numéro provisoire : en attente du numéro de Marc\.?\s*/, '').trim();
+    const notes = String(x.r[M.notes] || '').replace(/Numéro provisoire : en attente du numéro (définitif|de Marc)\.?\s*/, '').trim();
     setCells_('Mères', x.row, M.num, [n]);
     setCells_('Mères', x.row, M.lot, [lotDuNumero_(n)]);
     setCells_('Mères', x.row, M.notes, [notes]);
@@ -433,14 +433,14 @@ function prendreBoutures(nom, code, p, requestId) {
       try { lierLot_(u, { lot, salle, round: p.round || '', cycle: p.cycle || '' }); }
       catch (e) { journal_(u.nom, 'rattachement refusé', 'lot', lot, String(e && e.message || e) + ' · à rattacher depuis l\'onglet Boutures'); }
     }
-    // Salle 2 : chaque bouture devient tout de suite une mère, avec un numéro provisoire (le numéro de Marc s'inscrit plus tard)
+    // Salle 2 : chaque bouture devient tout de suite une mère, avec un numéro provisoire (le numéro définitif s'inscrit plus tard)
     if (normSalle_(salle) === 'Salle 2') {
       let k = 0;
       out.forEach(o => { for (let i = 0; i < o.nb; i++) {
         const num = provNum_(date, requestId, ++k);
         if (trouverMere_(num)) continue;
         append_('Mères', [num, o.x.r[M.surnom], '', o.x.r[M.cult], date, 'saisie', o.x.r[M.num], 'Salle 2', 'active', '',
-          'Numéro provisoire : en attente du numéro de Marc', u.nom, now_(), '', '', lot]);
+          'Numéro provisoire : en attente du numéro définitif', u.nom, now_(), '', '', lot]);
         append_('Végétation', [date, '', num, 1, o.x.r[M.cult], u.nom, 'numéro provisoire']);
       } });
       if (k) journal_(u.nom, 'création', 'mère', lot, k + ' mère' + (k > 1 ? 's' : '') + ' à numéro provisoire (boutures pour la salle 2)');

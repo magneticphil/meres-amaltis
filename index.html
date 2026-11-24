@@ -238,7 +238,7 @@ function age(s) {
   return m < 24 ? m + ' mois' : (m / 12).toFixed(1).replace('.', ',') + ' ans';
 }
 const FORMAT = /^\d{12}_[0-9A-Z]+$/;
-/* Bouture pour la salle 2 : mère créée tout de suite, numéro provisoire en attendant celui de Marc (même calcul que le serveur). */
+/* Bouture pour la salle 2 : mère créée tout de suite, numéro provisoire en attendant le numéro définitif (même calcul que le serveur). */
 const provNum = (date, id, k) => 'PROV-' + String(date).replace(/-/g, '') + '-' + String(id || 'X').replace(/[^0-9A-Za-z]/g, '').slice(-4).toUpperCase() + '-' + k;
 const estProv = n => /^PROV-/.test(norm(n));
 const norm = s => String(s || '').replace(/\s+/g, '').toUpperCase();
@@ -380,7 +380,7 @@ function superposer(srv) {
       if (normSalle(a[0].salle) === 'Salle 2') { let k = 0;
         a[0].lignes.forEach(l => { const m = trouve(l.numero); for (let i = 0; i < l.nb; i++) { const n = provNum(a[0].date, it.id, ++k); if (trouve(n)) continue;
           d.meres.push({ numero:n, surnom:m ? m.surnom : '', lot:'', cultivar:m ? m.cultivar : '', creation:a[0].date, source:'saisie', parent:m ? m.numero : norm(l.numero),
-            emplacement:'Salle 2', statut:'active', destruction:'', notes:'Numéro provisoire : en attente du numéro de Marc', creePar:moi, creeLe:it.at, lotOrigine:a[0].lot, queued:true }); } }); }
+            emplacement:'Salle 2', statut:'active', destruction:'', notes:'Numéro provisoire : en attente du numéro définitif', creePar:moi, creeLe:it.at, lotOrigine:a[0].lot, queued:true }); } }); }
       if ((a[0].round || a[0].cycle) && !d.lots.some(y => normLot(y.lot) === normLot(a[0].lot))) lierLocal({ lot:a[0].lot, salle:a[0].salle, round:a[0].round || '', cycle:a[0].cycle || '' }, it);
     } else if (it.fn === 'lierLot') {
       lierLocal(a[0], it);
@@ -388,7 +388,7 @@ function superposer(srv) {
       const m = trouve(a[0]), n = norm(a[1]); if (!m || trouve(n)) return;
       d.meres.forEach(x => { if (norm(x.parent) === norm(a[0])) x.parent = n; });
       d.boutures.forEach(x => { if (norm(x.numero) === norm(a[0])) x.numero = n; });
-      m.numero = n; m.lot = lotDuNumero(n); m.notes = String(m.notes || '').replace(/Numéro provisoire : en attente du numéro de Marc\.?\s*/, '').trim(); m.queued = true;
+      m.numero = n; m.lot = lotDuNumero(n); m.notes = String(m.notes || '').replace(/Numéro provisoire : en attente du numéro (définitif|de Marc)\.?\s*/, '').trim(); m.queued = true;
     } else if (it.fn === 'detruire') {
       const m = trouve(a[0].numero); if (!m) return;
       d.destructions.push({ id:'att-' + it.id, date:a[0].date, numero:m.numero, lot:m.lot, cultivar:m.cultivar, poids:String(a[0].poids).replace(',', '.'),
@@ -414,7 +414,7 @@ function superposer(srv) {
 }
 const LIBELLE = { creerMere:'Nouvelle mère', modifierMere:'Modification de fiche', prendreBoutures:'Prise de boutures', detruire:'Destruction',
   marquerRsdc:'RSDC complété', annulerDestruction:'Annulation de destruction', supprimerBouture:'Suppression de boutures',
-  detruirePlants:'Destruction de plants', renommerCultivar:'Renommage de cultivar', lierLot:'Rattachement du lot', renumeroterMere:'Numéro de Marc', annulerDestructionPlants:'Annulation de destruction de plants' };
+  detruirePlants:'Destruction de plants', renommerCultivar:'Renommage de cultivar', lierLot:'Rattachement du lot', renumeroterMere:'Numéro définitif', annulerDestructionPlants:'Annulation de destruction de plants' };
 let flushing = false, flushTimer = null, flushDelay = 3000, apresFile = null;
 function scheduleFlush(ms) { clearTimeout(flushTimer); flushTimer = setTimeout(flushOutbox, ms); }
 async function flushOutbox() {
@@ -751,10 +751,10 @@ const pasFutur = (d, m) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error
 const datalistCult = () => '<datalist id="dl-cult">' + [...new Set(S.d.meres.map(m => m.cultivar).filter(Boolean))].sort().map(c => '<option value="' + esc(c) + '">').join('') + '</datalist>';
 
 /* Fiche d'une mère */
-/* Numéro de Marc pour une mère créée avec un numéro provisoire */
+/* Numéro définitif pour une mère créée avec un numéro provisoire */
 function formRenum(num) {
   const m = mere(num); if (!m) return;
-  ouvrir(tete('Numéro de Marc') +
+  ouvrir(tete('Numéro définitif') +
     '<div class="meta">' + esc(nomMere(m)) + ' · numéro provisoire ' + esc(m.numero) + (m.lotOrigine ? ' · bouture du lot ' + esc(m.lotOrigine) : '') + '</div>' +
     '<label for="r-num">Numéro unique (forme complète)</label><input id="r-num" type="text" autocapitalize="characters" autocomplete="off" placeholder="202611230001_036BG">' +
     '<div class="hint">Le numéro provisoire sera remplacé partout : fiche, boutures, destructions et registre de végétation.</div>' +
@@ -788,7 +788,7 @@ function fiche(num) {
     '<div><span>Inscrite par</span><b>' + esc(m.creePar || '—') + (m.creeLe ? ' · ' + esc(m.creeLe.slice(0, 10)) : '') + '</b></div>' +
     '</div>' +
     (m.statut === 'active' ? '<div class="foot"><button class="btn pri" data-prise="' + esc(m.numero) + '">Prise de boutures</button><button class="btn dan" data-detr="' + esc(m.numero) + '">Détruire</button></div>' : '') +
-    (estProv(m.numero) && m.statut === 'active' ? '<div class="foot" style="margin-top:8px"><button class="btn pri" data-renum="' + esc(m.numero) + '">Inscrire le numéro de Marc</button></div>' : '') +
+    (estProv(m.numero) && m.statut === 'active' ? '<div class="foot" style="margin-top:8px"><button class="btn pri" data-renum="' + esc(m.numero) + '">Inscrire le numéro définitif</button></div>' : '') +
     '<div class="foot" style="margin-top:8px"><button class="btn" data-modif="' + esc(m.numero) + '">Modifier la fiche</button></div>' +
     (ds ? '<h2>Destruction</h2><div class="kv"><div><span>Date</span><b>' + fDate(ds.date) + '</b></div><div><span>Poids</span><b>' + esc(ds.poids) + ' g</b></div><div><span>Méthode</span><b>' + esc(ds.methode) + '</b></div><div><span>Raison</span><b>' + esc(ds.raison) + '</b></div><div><span>Témoins</span><b>' + esc(ds.temoin1) + ', ' + esc(ds.temoin2) + '</b></div><div><span>RSDC</span><b>' + (ds.rsdc === 'oui' ? 'complété' : 'à compléter') + '</b></div></div>' : '') +
     '<h2>Boutures <small>' + tot + ' au total</small></h2>' +
@@ -802,7 +802,7 @@ function formMere() {
 
   ouvrir(tete('Nouvelle mère') +
     '<label for="m-num">Numéro unique (forme complète)</label><input id="m-num" type="text" autocapitalize="characters" autocomplete="off" placeholder="202411020026_036BG">' +
-    '<div class="hint" id="m-hint">Numéro attribué par Marc : 12 chiffres, « _ », lot.</div>' +
+    '<div class="hint" id="m-hint">Numéro unique : 12 chiffres, « _ », lot.</div>' +
     '<label class="check" style="margin-top:8px"><input type="checkbox" id="m-libre"> Numéro hors format (exceptionnel)</label>' +
     '<div class="two"><div><label for="m-surnom">Surnom (usage interne)</label><input id="m-surnom" type="text" placeholder="Z2, T1…"></div>' +
     '<div><label for="m-lot">Lot</label><input id="m-lot" type="text" autocapitalize="characters" placeholder="déduit du numéro"></div></div>' +
@@ -819,7 +819,7 @@ function formMere() {
     pied('Enregistrer', 'm-ok'));
   const maj = () => {
     const n = norm($('m-num').value), h = $('m-hint');
-    if (!n) { h.className = 'hint'; h.textContent = 'Numéro attribué par Marc : 12 chiffres, « _ », lot.'; return; }
+    if (!n) { h.className = 'hint'; h.textContent = 'Numéro unique : 12 chiffres, « _ », lot.'; return; }
     if (mere(n)) { h.className = 'hint bad'; h.textContent = 'Ce numéro existe déjà.'; return; }
     if (!FORMAT.test(n)) { h.className = 'hint bad'; h.textContent = 'Format incomplet : la forme longue est attendue (ex. 202411020026_036BG).'; return; }
     const d = dateDuNumero(n);
@@ -884,7 +884,7 @@ function formPrise(pre) {
     '<div id="p-rbloc"><label>Round de destination</label><input type="hidden" id="p-cycle"><div class="chips wrap" id="p-rounds"><span class="muted">Choisissez d\'abord la salle.</span></div>' +
     '<label for="p-round">Numéro du round</label><input id="p-round" type="number" inputmode="numeric" min="1" step="1" placeholder="ex. 15" disabled>' +
     '<div class="hint">Choisissez un bouton ou saisissez un autre numéro, même si le round n\'est pas encore au calendrier.</div></div>' +
-    '<div class="hint hidden" id="p-s2">Salle 2 : chaque bouture est ajoutée tout de suite comme mère, avec un numéro provisoire. Inscrivez le numéro de Marc plus tard, depuis la fiche de la mère.</div>' +
+    '<div class="hint hidden" id="p-s2">Salle 2 : chaque bouture est ajoutée tout de suite comme mère, avec un numéro provisoire. Inscrivez le numéro définitif plus tard, depuis la fiche de la mère.</div>' +
     '<label for="p-lot">No. de lot</label><input id="p-lot" type="text" autocapitalize="characters" placeholder="rempli automatiquement, ex. S4R16">' +
     '<label>Mères et nombre de boutures</label>' +
     '<div class="chips" id="p-cults">' + ['Tous'].concat(cults).map(c => '<button class="chip' + (c === c0 ? ' on' : '') + '" data-pc="' + esc(c) + '">' + esc(c) + '</button>').join('') + '</div>' +
