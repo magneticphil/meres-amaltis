@@ -668,8 +668,11 @@ function detruirePlants(nom, code, d, requestId) {
     if (premiere && date < premiere) throw refus_('La date précède la prise de boutures du lot (' + premiere + ').');
     const deja = rows_('Destructions plants').filter(x => normLot_(x.r[2]) === lotN && (x.r[10] || 'valide') !== 'annulée')
       .reduce((s, x) => s + (parseFloat(x.r[5]) || 0), 0);
-    if (deja + nombre > preleves)
-      throw refus_('Le total détruit (' + (deja + nombre) + ') dépasserait les ' + preleves + ' boutures prélevées du lot ' + bout[0].r[5] + ' (déjà détruites : ' + deja + ').');
+    // boutures du lot devenues des mères (salle 2) : elles ne peuvent plus être détruites comme plants du lot
+    const enMeres = rows_('Mères').filter(m => normLot_(m.r[M.lotOrig]) === lotN && m.r[M.statut] !== 'annulée').length;
+    if (deja + nombre + enMeres > preleves)
+      throw refus_('Le total détruit (' + (deja + nombre) + ') dépasserait les ' + (preleves - enMeres) + ' plants disponibles du lot ' + bout[0].r[5] +
+        ' (prélevées : ' + preleves + (enMeres ? ', devenues mères : ' + enMeres : '') + ', déjà détruites : ' + deja + ').');
     const lot = bout[0].r[5], salle = bout[0].r[4];
     const id = id_();
     const row = [id, date, lot, etape, salle, nombre, raison, txt_(d.notes, 300), u.nom, now_(), 'valide', '', '', ''];
