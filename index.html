@@ -283,6 +283,8 @@ function roundPropose(x) {
   return { salle, round: c ? c.round : n ? 'round ' + (+n[2]) : '', cycle: c ? c.id : '' };
 }
 const actives = () => S.d.meres.filter(m => m.statut === 'active');
+/* Ordre des listes : cultivar, puis surnom, puis numéro (les mères d'un même cultivar restent groupées) */
+const ordreMeres = (a, b) => (a.cultivar || '').localeCompare(b.cultivar || '', 'fr') || (a.surnom || '').localeCompare(b.surnom || '', 'fr', { numeric:true }) || a.numero.localeCompare(b.numero, 'fr', { numeric:true });
 const isAdmin = () => S.d && S.d.role === 'admin';
 
 /* ---------- Connexion ---------- */
@@ -819,7 +821,7 @@ function formMere() {
       lots().filter(x => x.restants > 0).slice(0, 15).map(x => '<option value="' + esc(x.lot) + '">' + esc(x.lot) + ' — ' + esc(fDate(x.debut)) + ' · ' + esc([...new Set(x.prises.map(b => b.cultivar))].join(', ')) + '</option>').join('') + '</select>' +
     '<div class="hint">Bouture d\'un lot gardée pour refaire une mère : le lot comptera un plant de moins au transfert. Sans numéro unique, la mère reçoit un numéro provisoire, à remplacer plus tard depuis sa fiche.</div>' +
     '<label for="m-parent">Mère d\'origine (facultatif)</label><select id="m-parent"><option value="">—</option>' +
-    actives().map(m => '<option value="' + esc(m.numero) + '">' + esc(nomMere(m)) + ' — ' + esc(abrege(m.numero)) + '</option>').join('') + '</select>' +
+    actives().sort(ordreMeres).map(m => '<option value="' + esc(m.numero) + '">' + esc(nomMere(m)) + ' — ' + esc(abrege(m.numero)) + '</option>').join('') + '</select>' +
     '<label for="m-empl">Emplacement</label><input id="m-empl" type="text" placeholder="Salle 2, table…">' +
     '<label for="m-notes">Notes</label><textarea id="m-notes"></textarea>' +
     pied('Enregistrer', 'm-ok'));
@@ -964,7 +966,7 @@ function formPrise(pre) {
 
 /* Destruction */
 function formDetr(pre) {
-  const act = actives(), T = S.d.temoins;
+  const act = actives().sort(ordreMeres), T = S.d.temoins;
   if (!act.length) { toast('Aucune mère active.'); return; }
   const optT = sel => '<option value="">—</option>' + T.map(t => '<option' + (t.nom === sel ? ' selected' : '') + '>' + esc(t.nom) + '</option>').join('');
   ouvrir(tete('Destruction') +
