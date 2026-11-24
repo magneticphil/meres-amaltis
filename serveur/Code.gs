@@ -496,8 +496,10 @@ function detruire(nom, code, d, requestId) {
     if (!isDate_(date)) throw refus_('Date invalide.');
     if (date > today_()) throw refus_('La date ne peut pas être dans le futur.');
     if (x.r[M.crea] && date < x.r[M.crea]) throw refus_('La date de destruction précède la date de création.');
-    const poids = parseFloat(String(d.poids).replace(',', '.'));
-    if (!(poids > 0) || poids > 100000) throw refus_('Indiquez le poids net en grammes.');
+    // poids facultatif : pour des plants entiers, le règlement demande le nombre de plants (un par destruction), pas le poids
+    const vide = d.poids === '' || d.poids == null;
+    const poids = vide ? '' : parseFloat(String(d.poids).replace(',', '.'));
+    if (!vide && (!(poids > 0) || poids > 100000)) throw refus_('Le poids net doit être un nombre de grammes supérieur à 0, ou laissé vide.');
     const methode = txt_(d.methode, 100), raison = txt_(d.raison, 300);
     if (!methode) throw refus_('Indiquez la méthode de destruction.');
     if (!raison) throw refus_('Indiquez la raison de la destruction.');
@@ -508,7 +510,7 @@ function detruire(nom, code, d, requestId) {
     if (t1 === t2) throw refus_('Les deux témoins doivent être des personnes différentes.');
     [t1, t2].forEach(t => { if (habilites.indexOf(t) < 0) throw refus_(t + " n'est pas inscrit comme témoin habilité."); });
     const id = id_();
-    const row = [id, date, x.r[M.num], x.r[M.lot], x.r[M.cult], poids, methode, raison, t1, t2, d.rsdc ? 'oui' : 'non',
+    const row = [id, date, x.r[M.num], x.r[M.lot], x.r[M.cult], poids, methode, raison, t1, t2, '',
       u.nom, now_(), 'valide', '', '', ''];
     append_('Destructions', row);
     setCells_('Mères', x.row, M.statut, ['détruite', date]);
@@ -516,7 +518,7 @@ function detruire(nom, code, d, requestId) {
     const v = rows_('Végétation').find(y => normNum_(y.r[2]) === normNum_(x.r[M.num]) && !y.r[1]);
     if (v) setCells_('Végétation', v.row, 1, [date]);
     journal_(u.nom, 'destruction', 'mère', x.r[M.num],
-      date + ' · ' + poids + ' g · ' + methode + ' · ' + raison + ' · témoins ' + t1 + ', ' + t2 + ' · RSDC ' + (d.rsdc ? 'oui' : 'non') + ' · ID ' + id);
+      date + (poids !== '' ? ' · ' + poids + ' g' : '') + ' · ' + methode + ' · ' + raison + ' · témoins ' + t1 + ', ' + t2 + ' · ID ' + id);
     return { destruction: destructionDto_({ r: row.map(String) }), mere: Object.assign(mereDto_(x), { statut: 'détruite', destruction: date }) };
   });
 }
